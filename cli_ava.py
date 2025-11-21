@@ -1,0 +1,58 @@
+# cli_ava.py
+import os
+from typing import List, Dict, Any
+from ava_client import AvaClient
+from agent_controller import controller_turn
+from tools import SESSION  # uses your existing global
+
+def main():
+    print("Enter beta DB sqlite_path:", end=" ")
+    sqlite_path = input().strip()
+    print("Enter lead_id:", end=" ")
+    lead_id = input().strip()
+    print("Enter buyer_id:", end=" ")
+    buyer_id = input().strip()
+    print("Enter escalation phone number:", end=" ")
+    escalation_phone = input().strip()
+
+    # set session for tools
+    SESSION["sqlite_path"] = sqlite_path
+    SESSION["lead_id"] = int(lead_id) if lead_id.isdigit() else lead_id
+    SESSION["buyer_id"] = int(buyer_id) if buyer_id.isdigit() else buyer_id
+    SESSION["escalation_phone"] = escalation_phone
+
+    # Ava creds (from your message)
+    USER = os.getenv("AVA_USER", "amit")
+    PASS = os.getenv("AVA_PASS", "sta6952907")
+
+    ava = AvaClient(USER, PASS)
+    ava.login()
+    ava.get_session(force_new=True)
+    ava.connect_ws()
+
+    logs: List[Dict[str, Any]] = []
+
+    print("\nAva (Ava-backed) is ready. Type your message (or 'exit', '/logs').\n")
+    while True:
+        user = input("You: ").strip()
+        if user.lower() in ("exit", "quit"):
+            break
+        if user == "/logs":
+            from pprint import pprint
+            print("---- recent logs ----")
+            for row in logs[-5:]:
+                pprint(row, width=100)
+            print("---------------------")
+            continue
+
+        try:
+            reply = controller_turn(ava, user, logs)
+            print(f"Ava: {reply}\n")
+        except Exception as e:
+            print("Ava (error):", e)
+
+    ava.close()
+    print("Bye!")
+
+if __name__ == "__main__":
+    main()

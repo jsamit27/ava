@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: gmtv-ava-assistant
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: AVA_USER
+        sync: false
+      - key: AVA_PASS
+        sync: false
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: RINGCENTRAL_CLIENT_ID
+        sync: false
+      - key: RINGCENTRAL_CLIENT_SECRET
+        sync: false
+      - key: RINGCENTRAL_USERNAME
+        sync: false
+      - key: RINGCENTRAL_PASSWORD
+        sync: false
+      - key: RINGCENTRAL_SERVER
+        sync: false
+
