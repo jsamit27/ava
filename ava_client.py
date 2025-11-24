@@ -114,7 +114,9 @@ class AvaClient:
         }
         
         # Log what we're sending to Ava API
-        logger.info(f"[AVA API] Sending message to Ava (session: {self.session_id[:8]}, length: {len(prompt)} chars)")
+        log_msg = f"[AVA API] Sending message to Ava (session: {self.session_id[:8]}, length: {len(prompt)} chars)"
+        logger.info(log_msg)
+        print(log_msg, flush=True)
         logger.debug(f"[AVA API] Message preview: {prompt[:300]}...")
         
         ws.send(json.dumps(minimal, separators=(",", ":")))
@@ -122,12 +124,16 @@ class AvaClient:
         ws.close()
         if not bad and text:
             # Log what we received from Ava API
-            logger.info(f"[AVA API] Received response from Ava (length: {len(text)} chars)")
+            log_msg = f"[AVA API] Received response from Ava (length: {len(text)} chars)"
+            logger.info(log_msg)
+            print(log_msg, flush=True)
             logger.debug(f"[AVA API] Response preview: {text[:300]}...")
             return text
 
         # Attempt 2: legacy payload (temporary server requirement)
-        logger.info(f"[AVA API] Minimal payload failed, trying legacy payload")
+        log_msg = f"[AVA API] Minimal payload failed, trying legacy payload"
+        logger.info(log_msg)
+        print(log_msg, flush=True)
         ws = create_connection(
             f"wss://ava.andrew-chat.com/api/v1/stream?token={self.token}",
             header=["Origin: https://ava.andrew-chat.com"],
@@ -154,9 +160,13 @@ class AvaClient:
         ws.close()
         
         if text2:
-            logger.info(f"[AVA API] Received response via legacy payload (length: {len(text2)} chars)")
+            log_msg = f"[AVA API] Received response via legacy payload (length: {len(text2)} chars)"
+            logger.info(log_msg)
+            print(log_msg, flush=True)
             logger.debug(f"[AVA API] Response preview: {text2[:300]}...")
         else:
-            logger.warning(f"[AVA API] No response received from Ava")
+            log_msg = f"[AVA API] No response received from Ava"
+            logger.warning(log_msg)
+            print(log_msg, flush=True)
         
         return text2 or "Sorry—no response from Ava."

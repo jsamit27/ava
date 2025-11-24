@@ -13,12 +13,20 @@ from tools import SESSION
 import uuid
 
 # Configure logging to stdout (visible in Render logs)
+# Force logging to stdout/stderr so it appears in Render logs
+import sys
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler(sys.stdout)  # Explicitly use stdout
+    ],
+    force=True  # Override any existing configuration
 )
 logger = logging.getLogger(__name__)
+# Also set root logger level
+logging.getLogger().setLevel(logging.INFO)
 
 app = FastAPI()
 
@@ -83,12 +91,18 @@ async def init_session(data: InitRequest):
     
     # Create Ava client
     try:
-        logger.info(f"[SESSION INIT] Initializing session {session_id[:8]} - sqlite_path: {sqlite_path}, lead_id: {lead_id}, buyer_id: {buyer_id}")
+        log_msg = f"[SESSION INIT] Initializing session {session_id[:8]} - sqlite_path: {sqlite_path}, lead_id: {lead_id}, buyer_id: {buyer_id}"
+        logger.info(log_msg)
+        print(log_msg, flush=True)
         ava = get_or_create_ava_client(session_id)
-        logger.info(f"[SESSION INIT] Session {session_id[:8]} initialized successfully")
+        log_msg = f"[SESSION INIT] Session {session_id[:8]} initialized successfully"
+        logger.info(log_msg)
+        print(log_msg, flush=True)
         return {"success": True, "session_id": session_id, "message": "Session initialized successfully"}
     except Exception as e:
-        logger.error(f"[SESSION INIT] Failed to initialize session {session_id[:8]}: {str(e)}", exc_info=True)
+        error_msg = f"[SESSION INIT] Failed to initialize session {session_id[:8]}: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        print(error_msg, flush=True)
         raise HTTPException(status_code=500, detail=f"Failed to initialize: {str(e)}")
 
 @app.post("/api/chat")
@@ -113,8 +127,10 @@ async def chat(data: ChatRequest):
     if user_msg.lower() in ("exit", "quit"):
         return {"reply": "Session ended. Thank you!"}
     
-    # Log incoming user message
-    logger.info(f"[SESSION {session_id[:8]}] User message: {user_msg}")
+    # Log incoming user message (both logger and print for visibility)
+    log_msg = f"[SESSION {session_id[:8]}] User message: {user_msg}"
+    logger.info(log_msg)
+    print(log_msg, flush=True)  # Also print to ensure it shows in Render logs
     
     try:
         ava = get_or_create_ava_client(session_id)
@@ -122,12 +138,16 @@ async def chat(data: ChatRequest):
         reply = controller_turn(ava, user_msg, logs)
         user_logs[session_id] = logs  # Update logs
         
-        # Log Ava's response
-        logger.info(f"[SESSION {session_id[:8]}] Ava response: {reply[:200]}")
+        # Log Ava's response (both logger and print for visibility)
+        log_msg = f"[SESSION {session_id[:8]}] Ava response: {reply[:200]}"
+        logger.info(log_msg)
+        print(log_msg, flush=True)  # Also print to ensure it shows in Render logs
         
         return {"reply": reply}
     except Exception as e:
-        logger.error(f"[SESSION {session_id[:8]}] Error: {str(e)}", exc_info=True)
+        error_msg = f"[SESSION {session_id[:8]}] Error: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        print(error_msg, flush=True)
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 @app.get("/api/logs")
