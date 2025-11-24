@@ -78,6 +78,13 @@ async def init_session(data: InitRequest):
     # Create new session
     session_id = str(uuid.uuid4())
     
+    # Verify database file exists (from repository)
+    if not os.path.exists(sqlite_path):
+        error_msg = f"Database file not found: {sqlite_path}. Make sure it exists in the repository."
+        logger.error(error_msg)
+        print(error_msg, flush=True)
+        raise HTTPException(status_code=400, detail=error_msg)
+    
     # Store session data
     user_sessions[session_id] = {
         "sqlite_path": sqlite_path,
