@@ -8,9 +8,13 @@ It automatically falls back to the legacy payload if the minimal one fails.
 """
 
 import json
+import logging
 from typing import Optional, Tuple
 import requests
 from websocket import create_connection
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 END_MARKER = "<<END_OF_RESPONSE>>"
 
@@ -108,13 +112,22 @@ class AvaClient:
             "session_id": self.session_id,  # string
             "message": prompt,
         }
+        
+        # Log what we're sending to Ava API
+        logger.info(f"[AVA API] Sending message to Ava (session: {self.session_id[:8]}, length: {len(prompt)} chars)")
+        logger.debug(f"[AVA API] Message preview: {prompt[:300]}...")
+        
         ws.send(json.dumps(minimal, separators=(",", ":")))
         text, bad = _read_stream(ws)
         ws.close()
         if not bad and text:
+            # Log what we received from Ava API
+            logger.info(f"[AVA API] Received response from Ava (length: {len(text)} chars)")
+            logger.debug(f"[AVA API] Response preview: {text[:300]}...")
             return text
 
         # Attempt 2: legacy payload (temporary server requirement)
+        logger.info(f"[AVA API] Minimal payload failed, trying legacy payload")
         ws = create_connection(
             f"wss://ava.andrew-chat.com/api/v1/stream?token={self.token}",
             header=["Origin: https://ava.andrew-chat.com"],
@@ -139,4 +152,11 @@ class AvaClient:
         ws.send(json.dumps(legacy, separators=(",", ":")))
         text2, _ = _read_stream(ws)
         ws.close()
+        
+        if text2:
+            logger.info(f"[AVA API] Received response via legacy payload (length: {len(text2)} chars)")
+            logger.debug(f"[AVA API] Response preview: {text2[:300]}...")
+        else:
+            logger.warning(f"[AVA API] No response received from Ava")
+        
         return text2 or "Sorry—no response from Ava."

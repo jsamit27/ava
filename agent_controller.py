@@ -7,9 +7,13 @@ Single turn controller:
 - Log each step into `logs` for debugging (/logs in CLI)
 """
 
+import logging
 from typing import Dict, Any, List
 from ava_client import AvaClient
 from planner import build_planner_prompt, extract_json_block, validate_plan
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Import your actual tool implementations (not the LangChain wrappers)
 from all_tools import (
@@ -101,7 +105,15 @@ def controller_turn(ava: AvaClient, user_msg: str, logs: List[Dict[str, Any]]) -
     logs_snippet = "; ".join(f"{r.get('event')}:{r.get('detail')}" for r in recent if r)
     planner_prompt = build_planner_prompt(user_msg, SESSION, logs_snippet)
 
+    # Log message sent to Ava (planner prompt)
+    logger.info(f"[TO AVA - PLANNER] Sending planner prompt (length: {len(planner_prompt)} chars)")
+    logger.debug(f"[TO AVA - PLANNER] Prompt: {planner_prompt[:500]}...")  # First 500 chars
+    
     raw = ava.ask_once(planner_prompt)
+    
+    # Log Ava's planner response
+    logger.info(f"[FROM AVA - PLANNER] Received response (length: {len(raw)} chars)")
+    logger.debug(f"[FROM AVA - PLANNER] Response: {raw[:500]}...")  # First 500 chars
     plan = extract_json_block(raw)
     if not plan:
         logs.append({"event": "planner_fail", "detail": raw[:200]})
@@ -145,7 +157,15 @@ I called the tool '{name}' and got this result:
 
 Please provide a natural, conversational response to the user's question based on this tool result. Be concise and directly answer what they asked. Return ONLY the response text, no JSON, no code blocks, just plain conversational text."""
     
+    # Log message sent to Ava (response generation)
+    logger.info(f"[TO AVA - RESPONSE GEN] Sending tool result for natural response generation")
+    logger.debug(f"[TO AVA - RESPONSE GEN] Prompt: {tool_result_prompt[:500]}...")
+    
     ava_response = ava.ask_once(tool_result_prompt)
+    
+    # Log Ava's response generation
+    logger.info(f"[FROM AVA - RESPONSE GEN] Received response (length: {len(ava_response)} chars)")
+    logger.debug(f"[FROM AVA - RESPONSE GEN] Response: {ava_response[:500]}...")
     # Extract text if Ava wrapped it in JSON or code blocks
     ava_response = ava_response.strip()
     
