@@ -25,6 +25,8 @@ def main():
     USER = os.getenv("AVA_USER", "amit")
     PASS = os.getenv("AVA_PASS", "sta6952907")
 
+    # AvaClient is a class, it has login, getsessions etc as methods in the class 
+    
     ava = AvaClient(USER, PASS)
     ava.login()
     ava.get_session(force_new=True)

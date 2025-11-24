@@ -16,11 +16,13 @@ from all_tools import (
     car_retrieve,
     car_add,
     car_update,
+    get_all_cars,
     get_buyer_availability,
     add_buyer_schedule,
     pickup_retrieve,
     pickup_add,
     pickup_update,
+    get_all_pickups,
     get_closest,
     send_escalate_message,
 )
@@ -50,6 +52,9 @@ def _dispatch_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
             return {"status": "error", "code": "FORBIDDEN", "message": "Ava cannot set buyer_offer_cents. Only GMTV employees can set the company's offer."}
         return car_update(car_id=car_id, sqlite_path=sp, patch=patch)
 
+    if name == "get_all_cars":
+        return get_all_cars(sqlite_path=sp)
+
     if name == "get_buyer_availability":
         return get_buyer_availability(sqlite_path=sp, buyer_id=SESSION.get("buyer_id"))
 
@@ -67,6 +72,9 @@ def _dispatch_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         pick_up_id = args.get("pick_up_id")
         patch = {k: v for k, v in args.items() if k != "pick_up_id"}
         return pickup_update(pick_up_id=pick_up_id, sqlite_path=sp, patch=patch)
+
+    if name == "get_all_pickups":
+        return get_all_pickups(sqlite_path=sp)
 
     if name == "get_closest":
         return get_closest(user_address=args.get("user_address", ""), state=args.get("state", "")) or {

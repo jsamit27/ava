@@ -274,6 +274,42 @@ def car_retrieve(sqlite_path: str, query: Dict[str, Any]) -> Dict[str, Any]:
 
 #-------------------------------------------------
 
+#-----------------Get All Cars----------------------
+
+#-------------------------------------------------
+
+def get_all_cars(sqlite_path: str) -> Dict[str, Any]:
+    """
+    Retrieve all cars from the database.
+    Returns: {"status": "success|error", "message": str, "data": {"cars": [...]}, ["code": str]}
+    """
+    try:
+        conn = sqlite3.connect(sqlite_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+    except Exception as e:
+        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open sandbox DB: {e}", "data": {}}
+
+    try:
+        cur.execute("SELECT * FROM cars ")
+        rows = cur.fetchall()
+        
+        cars = [dict(row) for row in rows]
+        return {
+            "status": "success",
+            "message": f"Retrieved {len(cars)} car(s).",
+            "data": {"cars": cars, "count": len(cars)}
+        }
+    except Exception as e:
+        return {"status": "error", "code": "TXN_FAILED", "message": f"Query failed: {e}", "data": {}}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+#-------------------------------------------------
+
 #-----------------Car update----------------------
 
 #-------------------------------------------------
@@ -796,6 +832,41 @@ def pickup_retrieve(pick_up_id: int, sqlite_path: str) -> Dict[str, Any]:
         except Exception:
             pass
 
+#-------------------------------------------------
+
+#-----------------Get All Pickups----------------------
+
+#-------------------------------------------------
+
+def get_all_pickups(sqlite_path: str) -> Dict[str, Any]:
+    """
+    Retrieve all pickups from the database.
+    Returns: {"status": "success|error", "message": str, "data": {"pickups": [...]}, ["code": str]}
+    """
+    try:
+        conn = sqlite3.connect(sqlite_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+    except Exception as e:
+        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open sandbox DB: {e}", "data": {}}
+
+    try:
+        cur.execute("SELECT * FROM pickup")
+        rows = cur.fetchall()
+        
+        pickups = [dict(row) for row in rows]
+        return {
+            "status": "success",
+            "message": f"Retrieved {len(pickups)} pickup(s).",
+            "data": {"pickups": pickups, "count": len(pickups)}
+        }
+    except Exception as e:
+        return {"status": "error", "code": "TXN_FAILED", "message": f"Query failed: {e}", "data": {}}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 #-------------------------------------------------
 

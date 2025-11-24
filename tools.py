@@ -13,10 +13,12 @@ from all_tools import (
     car_retrieve as _car_retrieve,
     car_update as _car_update,
     car_add as _car_add,
+    get_all_cars as _get_all_cars,
     get_closest as _get_closest,
     pickup_retrieve as _pickup_retrieve,
     pickup_update as _pickup_update,
     pickup_add as _pickup_add,
+    get_all_pickups as _get_all_pickups,
     send_escalate_message as _send_escalate_message,
 )
 
@@ -192,8 +194,13 @@ def car_add_tool(**kwargs):
     _log_tool("car_add", patch=patch)
     return _car_add(sqlite_path=SESSION["sqlite_path"], patch=patch)
 
+# --------------- GET ALL CARS -----------------------
 
-
+@tool("get_all_cars", return_direct=False)
+def get_all_cars_tool() -> Dict[str, Any]:
+    """Retrieve all cars from the database. Returns all car records with all their details."""
+    _log_tool("get_all_cars")
+    return _get_all_cars(sqlite_path=SESSION["sqlite_path"])
 
 # --------------- PICKUP -----------------------
 
@@ -245,6 +252,13 @@ def pickup_add_tool(**kwargs):
     _log_tool("pickup_add", patch=patch)
     return _pickup_add(sqlite_path=SESSION["sqlite_path"], patch=patch)
 
+# --------------- GET ALL PICKUPS -----------------------
+
+@tool("get_all_pickups", return_direct=False)
+def get_all_pickups_tool() -> Dict[str, Any]:
+    """Retrieve all pickups from the database. Returns all pickup records with all their details."""
+    _log_tool("get_all_pickups")
+    return _get_all_pickups(sqlite_path=SESSION["sqlite_path"])
 
 # --------------- UTILITY ----------------------
 
@@ -280,9 +294,11 @@ ALL_TOOLS = [
     car_retrieve_tool,
     car_update_tool,
     car_add_tool,
+    get_all_cars_tool,
     pickup_retrieve_tool,
     pickup_update_tool,
     pickup_add_tool,
+    get_all_pickups_tool,
     get_closest_tool,
     send_escalate_message_tool,
 ]

@@ -18,11 +18,13 @@ ALLOWED_TOOL_NAMES = [
     "car_retrieve",
     "car_add",
     "car_update",
+    "get_all_cars",
     "get_buyer_availability",
     "add_buyer_schedule",
     "pickup_retrieve",
     "pickup_add",
     "pickup_update",
+    "get_all_pickups",
     "get_closest",
     "send_escalate_message",
 ]
