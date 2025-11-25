@@ -398,8 +398,15 @@ def car_update(car_id: int, sqlite_path: str, patch: Dict[str, Any]) -> Dict[str
 
 
 def _next_temp_car_id(conn, is_pg: bool) -> int:
-    cur = execute_query(conn, is_pg, "SELECT MIN(id) FROM cars", ())
-    min_id = cur.fetchone()[0]
+    cur = execute_query(conn, is_pg, "SELECT MIN(id) as min_id FROM cars", ())
+    row = cur.fetchone()
+    if row is None:
+        return -1
+    # Handle both SQLite (tuple) and PostgreSQL (dict)
+    if is_pg:
+        min_id = row.get("min_id") if isinstance(row, dict) else row[0]
+    else:
+        min_id = row[0] if isinstance(row, tuple) else row.get("min_id")
     return -1 if (min_id is None or min_id > 0) else (min_id - 1)
 
 def car_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
@@ -938,8 +945,15 @@ def _next_temp_pickup_id(conn, is_pg: bool) -> int:
     Next negative pick_up_id for sandbox-created rows.
     Starts at -1, then -2, -3, ...
     """
-    cur = execute_query(conn, is_pg, "SELECT MIN(pick_up_id) FROM pickup", ())
-    min_id = cur.fetchone()[0]
+    cur = execute_query(conn, is_pg, "SELECT MIN(pick_up_id) as min_id FROM pickup", ())
+    row = cur.fetchone()
+    if row is None:
+        return -1
+    # Handle both SQLite (tuple) and PostgreSQL (dict)
+    if is_pg:
+        min_id = row.get("min_id") if isinstance(row, dict) else row[0]
+    else:
+        min_id = row[0] if isinstance(row, tuple) else row.get("min_id")
     return -1 if (min_id is None or min_id > 0) else (min_id - 1)
 
 def pickup_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
