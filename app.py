@@ -55,7 +55,7 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 class InitRequest(BaseModel):
-    sqlite_path: str
+    sqlite_path: Optional[str] = None  # Optional - not needed if DATABASE_URL is set
     lead_id: str
     buyer_id: str
     escalation_phone: str
@@ -67,13 +67,12 @@ class ChatRequest(BaseModel):
 @app.post("/api/init")
 async def init_session(data: InitRequest):
     """Initialize a new session with user credentials."""
-    sqlite_path = data.sqlite_path.strip()
     lead_id = data.lead_id.strip()
     buyer_id = data.buyer_id.strip()
     escalation_phone = data.escalation_phone.strip()
     
-    if not all([sqlite_path, lead_id, buyer_id, escalation_phone]):
-        raise HTTPException(status_code=400, detail="All fields are required")
+    if not all([lead_id, buyer_id, escalation_phone]):
+        raise HTTPException(status_code=400, detail="lead_id, buyer_id, and escalation_phone are required")
     
     # Create new session
     session_id = str(uuid.uuid4())
@@ -82,13 +81,20 @@ async def init_session(data: InitRequest):
     # If not, use SQLite file path
     db_connection = os.getenv("DATABASE_URL")
     if not db_connection:
-        # Using SQLite - verify file exists
+        # Using SQLite - sqlite_path is required
+        sqlite_path = (data.sqlite_path or "").strip()
+        if not sqlite_path:
+            raise HTTPException(status_code=400, detail="sqlite_path is required when DATABASE_URL is not set (local mode)")
+        # Verify file exists
         if not os.path.exists(sqlite_path):
             error_msg = f"Database file not found: {sqlite_path}. Make sure it exists in the repository."
             logger.error(error_msg)
             print(error_msg, flush=True)
             raise HTTPException(status_code=400, detail=error_msg)
         db_connection = sqlite_path
+        logger.info(f"[SESSION INIT] Using SQLite database: {sqlite_path}")
+    else:
+        logger.info(f"[SESSION INIT] Using PostgreSQL database (DATABASE_URL is set)")
     
     # Store session data
     user_sessions[session_id] = {
@@ -103,7 +109,8 @@ async def init_session(data: InitRequest):
     
     # Create Ava client
     try:
-        log_msg = f"[SESSION INIT] Initializing session {session_id[:8]} - sqlite_path: {sqlite_path}, lead_id: {lead_id}, buyer_id: {buyer_id}"
+        db_type = "PostgreSQL" if os.getenv("DATABASE_URL") else "SQLite"
+        log_msg = f"[SESSION INIT] Initializing session {session_id[:8]} - Database: {db_type}, lead_id: {lead_id}, buyer_id: {buyer_id}"
         logger.info(log_msg)
         print(log_msg, flush=True)
         ava = get_or_create_ava_client(session_id)

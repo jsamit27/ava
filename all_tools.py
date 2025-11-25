@@ -500,13 +500,24 @@ def car_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         try: conn.rollback()
         except Exception: pass
-        msg = str(e).lower()
-        if "foreign key" in msg:
+        # Get full error details
+        error_msg = str(e)
+        error_type = type(e).__name__
+        msg_lower = error_msg.lower()
+        
+        # Log the full error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"car_add error: {error_type}: {error_msg}", exc_info=True)
+        
+        if "foreign key" in msg_lower:
             return {"status": "error", "code": "PRECONDITION_FAILED", "message": "Invalid reference (foreign key).",
-                    "data": {"lead_id": patch.get("lead_id")}}
-        if "unique" in msg or "integrity" in msg:
-            return {"status": "error", "code": "PRECONDITION_FAILED", "message": f"Integrity error: {e}", "data": {}}
-        return {"status": "error", "code": "TXN_FAILED", "message": f"Insert/upsert failed: {e}", "data": {}}
+                    "data": {"lead_id": patch.get("lead_id"), "error": error_msg}}
+        if "unique" in msg_lower or "integrity" in msg_lower or "duplicate" in msg_lower:
+            return {"status": "error", "code": "PRECONDITION_FAILED", "message": f"Integrity error: {error_msg}", "data": {"error": error_msg}}
+        if "not null" in msg_lower:
+            return {"status": "error", "code": "INVALID_INPUT", "message": f"Required field missing: {error_msg}", "data": {"error": error_msg}}
+        return {"status": "error", "code": "TXN_FAILED", "message": f"Insert/upsert failed: {error_type}: {error_msg}", "data": {"error": error_msg, "error_type": error_type}}
 
     finally:
         try: conn.close()
