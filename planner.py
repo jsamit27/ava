@@ -14,20 +14,7 @@ from typing import Dict, Any, Optional
 from tools import ALL_TOOLS
 
 # ---- What tools the planner is allowed to call (names must match tools.py) ----
-ALLOWED_TOOL_NAMES = [
-    "car_retrieve",
-    "car_add",
-    "car_update",
-    "get_all_cars",
-    "get_buyer_availability",
-    "add_buyer_schedule",
-    "pickup_retrieve",
-    "pickup_add",
-    "pickup_update",
-    "get_all_pickups",
-    "get_closest",
-    "send_escalate_message",
-]
+ALLOWED_TOOL_NAMES = [tool.name for tool in ALL_TOOLS]
 
 
 def _build_tool_catalog() -> str:

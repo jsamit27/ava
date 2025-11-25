@@ -68,23 +68,3 @@ def execute_query(conn, is_postgres_flag: bool, query: str, params: tuple = ()):
         # SQLite
         return conn.execute(query, params)
 
-def get_connection_string() -> str:
-    """
-    Get database connection string from environment or default to SQLite.
-    For Render: Use DATABASE_URL environment variable
-    For local: Use sqlite_path from SESSION or default file
-    """
-    # Check for PostgreSQL URL in environment (Render)
-    db_url = os.getenv("DATABASE_URL")
-    if db_url:
-        return db_url
-    
-    # Fall back to SQLite (for local CLI)
-    from tools import SESSION
-    sqlite_path = SESSION.get("sqlite_path")
-    if sqlite_path:
-        return sqlite_path
-    
-    # Default fallback
-    return "sandbox_lead_3.db"
-

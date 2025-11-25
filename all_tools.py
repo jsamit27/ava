@@ -1,7 +1,17 @@
-import sqlite3
+import logging
+import os
+import sys
 from datetime import datetime
-from typing import List, Dict, Any, Union
-from db_connection import get_db_connection, execute_query, is_postgres, get_connection_string
+from typing import List, Dict, Any, Union, Optional
+from pathlib import Path
+import csv
+import requests
+from dotenv import load_dotenv
+from ringcentral import SDK
+from db_connection import get_db_connection, execute_query
+
+# Load environment variables once at module level
+load_dotenv()
 
 
 PRIORITIES = {"Low", "Medium", "High"}
@@ -513,7 +523,6 @@ def car_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
         msg_lower = error_msg.lower()
         
         # Log the full error for debugging
-        import logging
         logger = logging.getLogger(__name__)
         logger.error(f"car_add error: {error_type}: {error_msg}", exc_info=True)
         
@@ -532,16 +541,7 @@ def car_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # helper_distance.py
-import csv
-import os
-from pathlib import Path
-from typing import Dict, List, Optional
-
-import requests
-from dotenv import load_dotenv
-
 # --- API key from .env ---
-load_dotenv()
 API_KEY = os.getenv("API_KEY")
 
 # --- Directory where state CSV files live ---
@@ -752,12 +752,6 @@ def get_closest(user_address: str, state: str, max_miles: float = 100.0) -> Opti
     best["neighbors_checked"] = neighbors
     best["threshold_exceeded"] = best["distance_miles"] > max_miles
     return best
-
-
-if __name__ == "__main__":
-    user_addr = "600 Peachtree St NE, Atlanta, GA 30308"
-    print(get_closest(user_addr, "gz"))
-
 
 
 #-------------------------------------------------
@@ -1030,13 +1024,6 @@ def pickup_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
     finally:
         try: conn.close()
         except Exception: pass
-
-
-import os, sys
-from dotenv import load_dotenv
-from ringcentral import SDK
-
-load_dotenv()
 
 # Initialize SDK
 rcsdk = SDK(

@@ -1,12 +1,7 @@
-# lc_tools.py
-from typing import Dict, Any
+# tools.py
+from typing import Dict, Any, Optional
 from langchain.tools import tool
-from typing import Optional
 from pydantic import BaseModel, Field
-
-
-# --- bring in your existing implementations (from the file you pasted) ---
-# If they live in the same file, you can remove these imports and use directly.
 from all_tools import (
     get_buyer_availability as _get_buyer_availability,
     add_buyer_schedule as _add_buyer_schedule,
@@ -22,29 +17,7 @@ from all_tools import (
     send_escalate_message as _send_escalate_message,
 )
 
-# FOR LOGGING 
-
-# ---- simple per-turn tool trace ----
-from datetime import datetime
-
-TOOL_TRACE = []  # cleared each user turn by the CLI
-
-def _log_tool(name: str, **kwargs):
-    # keep args small & safe for logs
-    safe = {}
-    for k, v in kwargs.items():
-        if k in {"patch"} and isinstance(v, dict):
-            # truncate big dicts for readability
-            safe[k] = {kk: v[kk] for kk in list(v)[:8]}
-            if len(v) > 8:
-                safe[k]["..."] = f"+{len(v)-8} more"
-        else:
-            safe[k] = v
-    TOOL_TRACE.append({
-        "ts": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-        "tool": name,
-        "args": safe,
-    })
+# Note: TOOL_TRACE and _log_tool were removed as they were never read/used
 
 
 
@@ -62,8 +35,6 @@ SESSION: Dict[str, Any] = {
 def get_buyer_availability_tool() -> Dict[str, Any]:
     """Return all schedule rows for a buyer, ordered by schedule_time."""
     buyer_id = SESSION["buyer_id"]
-    # LOGGING PURPOSE 
-    _log_tool("get_buyer_availability", buyer_id=buyer_id)
     return _get_buyer_availability(sqlite_path=SESSION["sqlite_path"], buyer_id=buyer_id)
 
 # -------- ADD BUYER SCHEDULE ------------
@@ -83,15 +54,10 @@ def add_buyer_schedule_tool(description: str,
     if priority is not None:
         patch["priority"] = priority
     
-    # LOGGING PURPOSE 
-    _log_tool("add_buyer_schedule", buyer_id=buyer_id, patch=patch)
     return _add_buyer_schedule(buyer_id=buyer_id, sqlite_path=SESSION["sqlite_path"], patch=patch)
 
 
 # --------------- CAR --------------------------
-
-# REPLACE your current car_retrieve_tool with this:
-
 
 class CarRetrieveInput(BaseModel):
     # auto-added by wrapper from SESSION; no need to expose
@@ -116,12 +82,7 @@ def car_retrieve_tool(car_id: Optional[int] = None,
     if make:              query["make"] = make
     if year is not None:  query["year"] = year
 
-    # LOGGING PURPOSE 
-    _log_tool("car_retrieve", query=query)
     return _car_retrieve(sqlite_path=SESSION["sqlite_path"], query=query)
-
-
-
 
 
 
@@ -161,8 +122,6 @@ def car_update_tool(car_id: int,
     # Remove buyer_offer_cents if somehow it got through (defense in depth)
     patch.pop("buyer_offer_cents", None)
     
-    # LOGGING PURPOSE 
-    _log_tool("car_update", car_id=car_id, patch=patch)
     return _car_update(car_id=car_id, sqlite_path=SESSION["sqlite_path"], patch=patch)
 
 
@@ -190,8 +149,6 @@ def car_add_tool(**kwargs):
     patch = {k: v for k, v in kwargs.items() if v is not None}
     patch.setdefault("lead_id", SESSION["lead_id"])
 
-    # LOGGING PURPOSE 
-    _log_tool("car_add", patch=patch)
     return _car_add(sqlite_path=SESSION["sqlite_path"], patch=patch)
 
 # --------------- GET ALL CARS -----------------------
@@ -199,7 +156,6 @@ def car_add_tool(**kwargs):
 @tool("get_all_cars", return_direct=False)
 def get_all_cars_tool() -> Dict[str, Any]:
     """Retrieve all cars from the database. Returns all car records with all their details."""
-    _log_tool("get_all_cars")
     return _get_all_cars(sqlite_path=SESSION["sqlite_path"])
 
 # --------------- PICKUP -----------------------
@@ -207,9 +163,6 @@ def get_all_cars_tool() -> Dict[str, Any]:
 @tool("pickup_retrieve", return_direct=False)
 def pickup_retrieve_tool(pick_up_id: int) -> Dict[str, Any]:
     """Get details of an existing pickup by ID."""
-
-    # LOGGING PURPOSE 
-    _log_tool("pickup_retrieve", pick_up_id=pick_up_id)
     return _pickup_retrieve(pick_up_id=pick_up_id, sqlite_path=SESSION["sqlite_path"])
 
 #------- PICKUP UPDATE ---------
@@ -228,8 +181,6 @@ def pickup_update_tool(pick_up_id: int, **kwargs):
     """Update a pickup by ID; supply only fields you want to change."""
     patch = {k: v for k, v in kwargs.items() if v is not None}
 
-    # LOGGING PURPOSE 
-    _log_tool("pickup_update", pick_up_id=pick_up_id, patch=patch)
     return _pickup_update(pick_up_id=pick_up_id, sqlite_path=SESSION["sqlite_path"], patch=patch)
 
 
@@ -248,8 +199,6 @@ def pickup_add_tool(**kwargs):
     """Create a new pickup request."""
     patch = {k: v for k, v in kwargs.items() if v is not None}
 
-    # LOGGING PURPOSE 
-    _log_tool("pickup_add", patch=patch)
     return _pickup_add(sqlite_path=SESSION["sqlite_path"], patch=patch)
 
 # --------------- GET ALL PICKUPS -----------------------
@@ -257,7 +206,6 @@ def pickup_add_tool(**kwargs):
 @tool("get_all_pickups", return_direct=False)
 def get_all_pickups_tool() -> Dict[str, Any]:
     """Retrieve all pickups from the database. Returns all pickup records with all their details."""
-    _log_tool("get_all_pickups")
     return _get_all_pickups(sqlite_path=SESSION["sqlite_path"])
 
 # --------------- UTILITY ----------------------
@@ -265,9 +213,6 @@ def get_all_pickups_tool() -> Dict[str, Any]:
 @tool("get_closest", return_direct=False)
 def get_closest_tool(user_address: str, state: str) -> Dict[str, Any]:
     """Find nearest drop-off to the user-provided address (state = 2-letter)."""
-
-    # LOGGING PURPOSE 
-    _log_tool("get_closest", user_address=user_address, state=state)
     return _get_closest(user_address=user_address, state=state) or {
         "status": "error",
         "message": "No nearby locations found."
@@ -277,9 +222,6 @@ def get_closest_tool(user_address: str, state: str) -> Dict[str, Any]:
 def send_escalate_message_tool(message_text: str) -> Dict[str, Any]:
     """Urgent internal SMS to escalation phone number (RingCentral-backed). Use this when a user is frustrated, angry, or needs immediate human intervention."""
     receiver_number = SESSION["escalation_phone"]
-    
-    # LOGGING PURPOSE 
-    _log_tool("send_escalate_message", receiver_number=receiver_number, message_text=message_text[:60])
 
     try:
         _send_escalate_message(receiver_number=receiver_number, message_text=message_text)
