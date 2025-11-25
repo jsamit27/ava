@@ -1,6 +1,7 @@
 import sqlite3
 from datetime import datetime
 from typing import List, Dict, Any, Union
+from db_connection import get_db_connection, execute_query, is_postgres, get_connection_string
 
 
 PRIORITIES = {"Low", "Medium", "High"}
@@ -31,22 +32,20 @@ def get_buyer_availability(sqlite_path: str, buyer_id: int) -> Dict[str, Any]:
             "data": {"received": buyer_id},
         }
 
-    # 1) open DB
+    # 1) open DB (supports both SQLite and PostgreSQL)
     try:
-        conn = sqlite3.connect(sqlite_path)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
+        conn, is_pg = get_db_connection(sqlite_path)
     except Exception as e:
         return {
             "status": "error",
             "code": "DB_UNAVAILABLE",
-            "message": f"Could not open sandbox DB: {e}",
+            "message": f"Could not open database: {e}",
             "data": {},
         }
 
     try:
         # 2) ensure buyer exists (so empty schedules vs. missing buyer are distinct)
-        cur.execute("SELECT 1 FROM buyers WHERE id = ? LIMIT 1", (buyer_id,))
+        cur = execute_query(conn, is_pg, "SELECT 1 FROM buyers WHERE id = ? LIMIT 1", (buyer_id,))
         if cur.fetchone() is None:
             return {
                 "status": "error",
@@ -56,13 +55,14 @@ def get_buyer_availability(sqlite_path: str, buyer_id: int) -> Dict[str, Any]:
             }
 
         # 3) fetch schedules
-        cur.execute("""
+        cur = execute_query(conn, is_pg, """
             SELECT id, buyer_id, description, schedule_time, priority
             FROM buyer_schedule
             WHERE buyer_id = ?
             ORDER BY schedule_time ASC
         """, (buyer_id,))
-        schedules = [dict(r) for r in cur.fetchall()]
+        rows = cur.fetchall()
+        schedules = [dict(r) for r in rows]
 
         msg = "Availability retrieved." if schedules else "No schedules found."
         return {
@@ -129,20 +129,18 @@ def add_buyer_schedule(
 
     # DB work
     try:
-        conn = sqlite3.connect(sqlite_path)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
+        conn, is_pg = get_db_connection(sqlite_path)
     except Exception as e:
-        return {"status":"error","code":"DB_UNAVAILABLE","message":f"Could not open sandbox DB: {e}","data":{}}
+        return {"status":"error","code":"DB_UNAVAILABLE","message":f"Could not open database: {e}","data":{}}
 
     try:
         # ensure buyer exists
-        cur.execute("SELECT 1 FROM buyers WHERE id = ? LIMIT 1", (buyer_id,))
+        cur = execute_query(conn, is_pg, "SELECT 1 FROM buyers WHERE id = ? LIMIT 1", (buyer_id,))
         if cur.fetchone() is None:
             return {"status":"error","code":"NOT_FOUND","message":f"Buyer id {buyer_id} not found.","data":{}}
 
         # check if time is already booked
-        cur.execute("""
+        cur = execute_query(conn, is_pg, """
             SELECT id, description, schedule_time, priority
             FROM buyer_schedule
             WHERE buyer_id = ? AND schedule_time = ?
@@ -159,37 +157,38 @@ def add_buyer_schedule(
             }
 
         # insert (ignore any patch['buyer_id'] to avoid conflicts)
-        cur.execute("""
-            INSERT INTO buyer_schedule (buyer_id, description, schedule_time, priority)
-            VALUES (?, ?, ?, ?)
-        """, (buyer_id, desc, st, pr))
+        if is_pg:
+            # PostgreSQL: use RETURNING clause to get the ID
+            cur = execute_query(conn, is_pg, """
+                INSERT INTO buyer_schedule (buyer_id, description, schedule_time, priority)
+                VALUES (?, ?, ?, ?) RETURNING id
+            """, (buyer_id, desc, st, pr))
+            schedule_id = cur.fetchone()["id"]
+        else:
+            # SQLite: use lastrowid
+            cur = execute_query(conn, is_pg, """
+                INSERT INTO buyer_schedule (buyer_id, description, schedule_time, priority)
+                VALUES (?, ?, ?, ?)
+            """, (buyer_id, desc, st, pr))
+            schedule_id = cur.lastrowid
         conn.commit()
-        schedule_id = cur.lastrowid
 
         # fetch & return
-        cur.execute("SELECT id, buyer_id, description, schedule_time, priority FROM buyer_schedule WHERE id = ?", (schedule_id,))
+        cur = execute_query(conn, is_pg, "SELECT id, buyer_id, description, schedule_time, priority FROM buyer_schedule WHERE id = ?", (schedule_id,))
         row = cur.fetchone()
         return {"status":"success","message":"Schedule added.","data":{"schedule": dict(row) if row else {"id": schedule_id}}}
-
-    except sqlite3.IntegrityError as ie:
-        try: conn.rollback()
-        except Exception: pass
-        msg = str(ie).lower()
-        if "foreign key" in msg:
-            return {"status":"error","code":"PRECONDITION_FAILED","message":"Invalid reference (foreign key).","data":{"buyer_id": buyer_id}}
-        return {"status":"error","code":"PRECONDITION_FAILED","message":f"Integrity error: {ie}","data":{}}
 
     except Exception as e:
         try: conn.rollback()
         except Exception: pass
+        msg = str(e).lower()
+        if "foreign key" in msg or "integrity" in msg:
+            return {"status":"error","code":"PRECONDITION_FAILED","message":"Invalid reference (foreign key).","data":{"buyer_id": buyer_id}}
         return {"status":"error","code":"TXN_FAILED","message":f"Insert failed: {e}","data":{}}
 
     finally:
         try: conn.close()
         except Exception: pass
-
-import sqlite3
-from typing import Dict, Any
 
 PRIORITY = ["car_id", "vin", "model", "make", "year"]
 
@@ -219,16 +218,14 @@ def car_retrieve(sqlite_path: str, query: Dict[str, Any]) -> Dict[str, Any]:
 
     # open DB
     try:
-        conn = sqlite3.connect(sqlite_path)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
+        conn, is_pg = get_db_connection(sqlite_path)
     except Exception as e:
-        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open sandbox DB: {e}", "data": {}}
+        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open database: {e}", "data": {}}
 
     try:
         # query using ONLY the selected key
         if key == "car_id":
-            cur.execute("SELECT * FROM cars WHERE id = ?", (value,))
+            cur = execute_query(conn, is_pg, "SELECT * FROM cars WHERE id = ?", (value,))
             row = cur.fetchone()
             meta = {"selected_key": key, "selected_value": value, "ignored_keys": ignored}
             if not row:
@@ -237,13 +234,13 @@ def car_retrieve(sqlite_path: str, query: Dict[str, Any]) -> Dict[str, Any]:
             return {"status": "success", "message": "Car retrieved.", "data": meta}
 
         elif key == "vin":
-            cur.execute("SELECT * FROM cars WHERE vin = ?", (str(value).strip(),))
+            cur = execute_query(conn, is_pg, "SELECT * FROM cars WHERE vin = ?", (str(value).strip(),))
         elif key == "model":
-            cur.execute("SELECT * FROM cars WHERE LOWER(model) LIKE ?", (f"%{str(value).strip().lower()}%",))
+            cur = execute_query(conn, is_pg, "SELECT * FROM cars WHERE LOWER(model) LIKE ?", (f"%{str(value).strip().lower()}%",))
         elif key == "make":
-            cur.execute("SELECT * FROM cars WHERE LOWER(make) LIKE ?", (f"%{str(value).strip().lower()}%",))
+            cur = execute_query(conn, is_pg, "SELECT * FROM cars WHERE LOWER(make) LIKE ?", (f"%{str(value).strip().lower()}%",))
         elif key == "year":
-            cur.execute("SELECT * FROM cars WHERE year = ?", (value,))
+            cur = execute_query(conn, is_pg, "SELECT * FROM cars WHERE year = ?", (value,))
         else:
             return {"status": "error", "code": "INVALID_INPUT", "message": f"Unsupported key '{key}'.", "data": {}}
 
@@ -284,14 +281,12 @@ def get_all_cars(sqlite_path: str) -> Dict[str, Any]:
     Returns: {"status": "success|error", "message": str, "data": {"cars": [...]}, ["code": str]}
     """
     try:
-        conn = sqlite3.connect(sqlite_path)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
+        conn, is_pg = get_db_connection(sqlite_path)
     except Exception as e:
-        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open sandbox DB: {e}", "data": {}}
+        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open database: {e}", "data": {}}
 
     try:
-        cur.execute("SELECT * FROM cars ")
+        cur = execute_query(conn, is_pg, "SELECT * FROM cars ", ())
         rows = cur.fetchall()
         
         cars = [dict(row) for row in rows]
@@ -346,14 +341,13 @@ def car_update(car_id: int, sqlite_path: str, patch: Dict[str, Any]) -> Dict[str
 
     # 2) open DB
     try:
-        conn = sqlite3.connect(sqlite_path)
-        cur = conn.cursor()
+        conn, is_pg = get_db_connection(sqlite_path)
     except Exception as e:
-        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open sandbox DB: {e}", "data": {}}
+        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open database: {e}", "data": {}}
 
     try:
         # 3) ensure the car exists
-        cur.execute("SELECT 1 FROM cars WHERE id = ? LIMIT 1", (car_id,))
+        cur = execute_query(conn, is_pg, "SELECT 1 FROM cars WHERE id = ? LIMIT 1", (car_id,))
         if cur.fetchone() is None:
             return {"status": "error", "code": "NOT_FOUND", "message": f"Car id {car_id} not found.", "data": {}}
 
@@ -361,7 +355,7 @@ def car_update(car_id: int, sqlite_path: str, patch: Dict[str, Any]) -> Dict[str
         updated_fields = 0
         for field, value in sanitized.items():
             # safe because 'field' is whitelisted above
-            cur.execute(f"UPDATE cars SET {field} = ? WHERE id = ?", (value, car_id))
+            cur = execute_query(conn, is_pg, f"UPDATE cars SET {field} = ? WHERE id = ?", (value, car_id))
             if cur.rowcount > 0:
                 updated_fields += 1
 
@@ -374,11 +368,10 @@ def car_update(car_id: int, sqlite_path: str, patch: Dict[str, Any]) -> Dict[str
             "data": {"car_id": car_id, "updated_fields": updated_fields}
         }
 
-    except sqlite3.IntegrityError as ie:
-        # e.g., unique VIN conflict
+    except Exception as e:
         try: conn.rollback()
         except Exception: pass
-        msg = str(ie).lower()
+        msg = str(e).lower()
         if "unique" in msg and "vin" in msg:
             return {
                 "status": "error",
@@ -386,11 +379,8 @@ def car_update(car_id: int, sqlite_path: str, patch: Dict[str, Any]) -> Dict[str
                 "message": "VIN already exists.",
                 "data": {"vin": patch.get("vin")}
             }
-        return {"status": "error", "code": "PRECONDITION_FAILED", "message": f"Integrity error: {ie}", "data": {}}
-
-    except Exception as e:
-        try: conn.rollback()
-        except Exception: pass
+        if "foreign key" in msg or "integrity" in msg:
+            return {"status": "error", "code": "PRECONDITION_FAILED", "message": f"Integrity error: {e}", "data": {}}
         return {"status": "error", "code": "TXN_FAILED", "message": f"Update failed: {e}", "data": {}}
 
     finally:
@@ -407,8 +397,8 @@ def car_update(car_id: int, sqlite_path: str, patch: Dict[str, Any]) -> Dict[str
 
 
 
-def _next_temp_car_id(cur) -> int:
-    cur.execute("SELECT MIN(id) FROM cars")
+def _next_temp_car_id(conn, is_pg: bool) -> int:
+    cur = execute_query(conn, is_pg, "SELECT MIN(id) FROM cars", ())
     min_id = cur.fetchone()[0]
     return -1 if (min_id is None or min_id > 0) else (min_id - 1)
 
@@ -429,14 +419,12 @@ def car_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     try:
-        conn = sqlite3.connect(sqlite_path)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
+        conn, is_pg = get_db_connection(sqlite_path)
     except Exception as e:
-        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open sandbox DB: {e}", "data": {}}
+        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open database: {e}", "data": {}}
 
     try:
-        # Normalize VIN (allow None/empty to mean “no VIN”)
+        # Normalize VIN (allow None/empty to mean "no VIN")
         vin = patch.get("vin")
         if isinstance(vin, str):
             vin_norm = vin.strip() or None
@@ -445,7 +433,7 @@ def car_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
 
         # If VIN provided, try UPSERT: update existing row instead of erroring
         if vin_norm is not None:
-            cur.execute("SELECT id FROM cars WHERE vin = ?", (vin_norm,))
+            cur = execute_query(conn, is_pg, "SELECT id FROM cars WHERE vin = ?", (vin_norm,))
             existing = cur.fetchone()
             if existing:
                 car_id = existing["id"]
@@ -459,7 +447,7 @@ def car_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
 
                 # If nothing to update, just return the row
                 if not sanitized:
-                    cur.execute("SELECT * FROM cars WHERE id = ?", (car_id,))
+                    cur = execute_query(conn, is_pg, "SELECT * FROM cars WHERE id = ?", (car_id,))
                     row = cur.fetchone()
                     return {"status": "success", "message": "Car upserted (existing VIN, no changes).",
                             "data": {"car": dict(row) if row else {"id": car_id}}}
@@ -467,28 +455,28 @@ def car_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
                 # Apply updates field-by-field (kept simple/explicit)
                 updated = 0
                 for field, value in sanitized.items():
-                    cur.execute(f"UPDATE cars SET {field} = ? WHERE id = ?", (value, car_id))
+                    cur = execute_query(conn, is_pg, f"UPDATE cars SET {field} = ? WHERE id = ?", (value, car_id))
                     if cur.rowcount > 0:
                         updated += 1
 
                 conn.commit()
-                cur.execute("SELECT * FROM cars WHERE id = ?", (car_id,))
+                cur = execute_query(conn, is_pg, "SELECT * FROM cars WHERE id = ?", (car_id,))
                 row = cur.fetchone()
                 return {"status": "success",
                         "message": "Car upserted (existing VIN updated)." if updated else "No fields changed.",
                         "data": {"car": dict(row) if row else {"id": car_id}, "updated_fields": updated}}
 
         # No VIN provided OR VIN does not exist -> insert a new row with a negative temp id
-        temp_id = _next_temp_car_id(cur)
+        temp_id = _next_temp_car_id(conn, is_pg)
 
-        cur.execute("""
+        cur = execute_query(conn, is_pg, """
             INSERT INTO cars (
                 id, vin, year, make, model, trim, mileage,
                 interior_condition, exterior_condition,
                 seller_ask_cents, buyer_offer_cents,
                 created_at, lead_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, [
+        """, (
             temp_id,
             vin_norm,
             patch.get("year"),
@@ -502,27 +490,22 @@ def car_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
             patch.get("buyer_offer_cents"),
             patch.get("created_at"),
             patch.get("lead_id"),
-        ])
+        ))
 
         conn.commit()
-        cur.execute("SELECT * FROM cars WHERE id = ?", (temp_id,))
+        cur = execute_query(conn, is_pg, "SELECT * FROM cars WHERE id = ?", (temp_id,))
         row = cur.fetchone()
         return {"status": "success", "message": "Car added.", "data": {"car": dict(row) if row else {"id": temp_id}}}
-
-    except sqlite3.IntegrityError as ie:
-        # If you keep a UNIQUE index on vin, we shouldn’t hit this with the upsert check above.
-        # But we still handle other integrity failures (FK, etc.).
-        try: conn.rollback()
-        except Exception: pass
-        msg = str(ie).lower()
-        if "foreign key" in msg:
-            return {"status": "error", "code": "PRECONDITION_FAILED", "message": "Invalid reference (foreign key).",
-                    "data": {"lead_id": patch.get("lead_id")}}
-        return {"status": "error", "code": "PRECONDITION_FAILED", "message": f"Integrity error: {ie}", "data": {}}
 
     except Exception as e:
         try: conn.rollback()
         except Exception: pass
+        msg = str(e).lower()
+        if "foreign key" in msg:
+            return {"status": "error", "code": "PRECONDITION_FAILED", "message": "Invalid reference (foreign key).",
+                    "data": {"lead_id": patch.get("lead_id")}}
+        if "unique" in msg or "integrity" in msg:
+            return {"status": "error", "code": "PRECONDITION_FAILED", "message": f"Integrity error: {e}", "data": {}}
         return {"status": "error", "code": "TXN_FAILED", "message": f"Insert/upsert failed: {e}", "data": {}}
 
     finally:
@@ -759,11 +742,6 @@ if __name__ == "__main__":
 
 
 
-import sqlite3
-from typing import Dict, Any
-
-
-
 #-------------------------------------------------
 
 #-----------------pickup-retrieve----------------------
@@ -789,20 +767,18 @@ def pickup_retrieve(pick_up_id: int, sqlite_path: str) -> Dict[str, Any]:
 
     # open DB
     try:
-        conn = sqlite3.connect(sqlite_path)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
+        conn, is_pg = get_db_connection(sqlite_path)
     except Exception as e:
         return {
             "status": "error",
             "code": "DB_UNAVAILABLE",
-            "message": f"Could not open sandbox DB: {e}",
+            "message": f"Could not open database: {e}",
             "data": {},
         }
 
     try:
         # query
-        cur.execute("SELECT * FROM pickup WHERE pick_up_id = ?", (pick_up_id,))
+        cur = execute_query(conn, is_pg, "SELECT * FROM pickup WHERE pick_up_id = ?", (pick_up_id,))
         row = cur.fetchone()
 
         if not row:
@@ -844,14 +820,12 @@ def get_all_pickups(sqlite_path: str) -> Dict[str, Any]:
     Returns: {"status": "success|error", "message": str, "data": {"pickups": [...]}, ["code": str]}
     """
     try:
-        conn = sqlite3.connect(sqlite_path)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
+        conn, is_pg = get_db_connection(sqlite_path)
     except Exception as e:
-        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open sandbox DB: {e}", "data": {}}
+        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open database: {e}", "data": {}}
 
     try:
-        cur.execute("SELECT * FROM pickup")
+        cur = execute_query(conn, is_pg, "SELECT * FROM pickup", ())
         rows = cur.fetchall()
         
         pickups = [dict(row) for row in rows]
@@ -903,15 +877,13 @@ def pickup_update(pick_up_id: int, sqlite_path: str, patch: Dict[str, Any]) -> D
 
     # 2) open DB
     try:
-        conn = sqlite3.connect(sqlite_path)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
+        conn, is_pg = get_db_connection(sqlite_path)
     except Exception as e:
-        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open sandbox DB: {e}", "data": {}}
+        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open database: {e}", "data": {}}
 
     try:
         # 3) ensure the pickup exists
-        cur.execute("SELECT 1 FROM pickup WHERE pick_up_id = ?", (pick_up_id,))
+        cur = execute_query(conn, is_pg, "SELECT 1 FROM pickup WHERE pick_up_id = ?", (pick_up_id,))
         if cur.fetchone() is None:
             return {"status": "error", "code": "NOT_FOUND", "message": f"Pickup id {pick_up_id} not found.", "data": {}}
 
@@ -919,7 +891,7 @@ def pickup_update(pick_up_id: int, sqlite_path: str, patch: Dict[str, Any]) -> D
         updated_fields = 0
         for field, value in sanitized.items():
             # safe because 'field' is whitelisted above
-            cur.execute(f"UPDATE pickup SET {field} = ? WHERE pick_up_id = ?", (value, pick_up_id))
+            cur = execute_query(conn, is_pg, f"UPDATE pickup SET {field} = ? WHERE pick_up_id = ?", (value, pick_up_id))
             if cur.rowcount > 0:
                 updated_fields += 1
 
@@ -927,17 +899,14 @@ def pickup_update(pick_up_id: int, sqlite_path: str, patch: Dict[str, Any]) -> D
         msg = f"Pickup updated ({updated_fields} fields)." if updated_fields else "No fields changed."
         return {"status": "success", "message": msg, "data": {"pick_up_id": pick_up_id, "updated_fields": updated_fields}}
 
-    except sqlite3.IntegrityError as ie:
-        try: conn.rollback()
-        except Exception: pass
-        msg = str(ie).lower()
-        if "foreign key" in msg:
-            return {"status": "error", "code": "PRECONDITION_FAILED", "message": "Invalid reference (foreign key).", "data": {"car_id": patch.get("car_id")}}
-        return {"status": "error", "code": "PRECONDITION_FAILED", "message": f"Integrity error: {ie}", "data": {}}
-
     except Exception as e:
         try: conn.rollback()
         except Exception: pass
+        msg = str(e).lower()
+        if "foreign key" in msg:
+            return {"status": "error", "code": "PRECONDITION_FAILED", "message": "Invalid reference (foreign key).", "data": {"car_id": patch.get("car_id")}}
+        if "integrity" in msg:
+            return {"status": "error", "code": "PRECONDITION_FAILED", "message": f"Integrity error: {e}", "data": {}}
         return {"status": "error", "code": "TXN_FAILED", "message": f"Update failed: {e}", "data": {}}
 
     finally:
@@ -953,12 +922,12 @@ def pickup_update(pick_up_id: int, sqlite_path: str, patch: Dict[str, Any]) -> D
 
 
 # ---------- PICKUP ADD (negative temp IDs like cars) ----------
-def _next_temp_pickup_id(cur) -> int:
+def _next_temp_pickup_id(conn, is_pg: bool) -> int:
     """
     Next negative pick_up_id for sandbox-created rows.
     Starts at -1, then -2, -3, ...
     """
-    cur.execute("SELECT MIN(pick_up_id) FROM pickup")
+    cur = execute_query(conn, is_pg, "SELECT MIN(pick_up_id) FROM pickup", ())
     min_id = cur.fetchone()[0]
     return -1 if (min_id is None or min_id > 0) else (min_id - 1)
 
@@ -976,11 +945,9 @@ def pickup_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
     ALLOWED = {"car_id", "address", "contact_phone", "pick_up_info", "created_at", "dropoff_time"}
     # (we'll still insert None for missing fields)
     try:
-        conn = sqlite3.connect(sqlite_path)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
+        conn, is_pg = get_db_connection(sqlite_path)
     except Exception as e:
-        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open sandbox DB: {e}", "data": {}}
+        return {"status": "error", "code": "DB_UNAVAILABLE", "message": f"Could not open database: {e}", "data": {}}
 
     try:
         # 1) optional FK precheck (since PRAGMA foreign_keys might be OFF)
@@ -990,21 +957,21 @@ def pickup_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
                 car_id_int = int(car_id)
             except Exception:
                 return {"status": "error", "code": "INVALID_INPUT", "message": "car_id must be an integer.", "data": {"received": car_id}}
-            cur.execute("SELECT 1 FROM cars WHERE id = ?", (car_id_int,))
+            cur = execute_query(conn, is_pg, "SELECT 1 FROM cars WHERE id = ?", (car_id_int,))
             if cur.fetchone() is None:
                 return {"status": "error", "code": "PRECONDITION_FAILED", "message": "Invalid car_id (no such car).", "data": {"car_id": car_id_int}}
         else:
             car_id_int = None
 
         # 2) allocate negative temp id
-        temp_id = _next_temp_pickup_id(cur)
+        temp_id = _next_temp_pickup_id(conn, is_pg)
 
         # 3) insert (fill missing with None; ignore unknown keys)
-        cur.execute("""
+        cur = execute_query(conn, is_pg, """
             INSERT INTO pickup (
                 pick_up_id, car_id, address, contact_phone, pick_up_info, created_at, dropoff_time
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, [
+        """, (
             temp_id,
             car_id_int,
             patch.get("address"),
@@ -1012,12 +979,12 @@ def pickup_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
             patch.get("pick_up_info"),
             patch.get("created_at"),
             patch.get("dropoff_time"),
-        ])
+        ))
 
         conn.commit()
 
         # 4) fetch & return
-        cur.execute("SELECT * FROM pickup WHERE pick_up_id = ?", (temp_id,))
+        cur = execute_query(conn, is_pg, "SELECT * FROM pickup WHERE pick_up_id = ?", (temp_id,))
         row = cur.fetchone()
         return {
             "status": "success",
@@ -1025,17 +992,14 @@ def pickup_add(sqlite_path: str, patch: Dict[str, Any]) -> Dict[str, Any]:
             "data": {"pickup": dict(row) if row else {"pick_up_id": temp_id}}
         }
 
-    except sqlite3.IntegrityError as ie:
-        try: conn.rollback()
-        except Exception: pass
-        msg = str(ie).lower()
-        if "foreign key" in msg:
-            return {"status": "error", "code": "PRECONDITION_FAILED", "message": "Invalid reference (foreign key).", "data": {"car_id": car_id}}
-        return {"status": "error", "code": "PRECONDITION_FAILED", "message": f"Integrity error: {ie}", "data": {}}
-
     except Exception as e:
         try: conn.rollback()
         except Exception: pass
+        msg = str(e).lower()
+        if "foreign key" in msg:
+            return {"status": "error", "code": "PRECONDITION_FAILED", "message": "Invalid reference (foreign key).", "data": {"car_id": car_id}}
+        if "integrity" in msg:
+            return {"status": "error", "code": "PRECONDITION_FAILED", "message": f"Integrity error: {e}", "data": {}}
         return {"status": "error", "code": "TXN_FAILED", "message": f"Insert failed: {e}", "data": {}}
 
     finally:

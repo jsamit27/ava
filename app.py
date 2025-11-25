@@ -78,16 +78,21 @@ async def init_session(data: InitRequest):
     # Create new session
     session_id = str(uuid.uuid4())
     
-    # Verify database file exists (from repository)
-    if not os.path.exists(sqlite_path):
-        error_msg = f"Database file not found: {sqlite_path}. Make sure it exists in the repository."
-        logger.error(error_msg)
-        print(error_msg, flush=True)
-        raise HTTPException(status_code=400, detail=error_msg)
+    # Check if DATABASE_URL is set (PostgreSQL on Render)
+    # If not, use SQLite file path
+    db_connection = os.getenv("DATABASE_URL")
+    if not db_connection:
+        # Using SQLite - verify file exists
+        if not os.path.exists(sqlite_path):
+            error_msg = f"Database file not found: {sqlite_path}. Make sure it exists in the repository."
+            logger.error(error_msg)
+            print(error_msg, flush=True)
+            raise HTTPException(status_code=400, detail=error_msg)
+        db_connection = sqlite_path
     
     # Store session data
     user_sessions[session_id] = {
-        "sqlite_path": sqlite_path,
+        "sqlite_path": db_connection,  # Can be SQLite path or PostgreSQL URL
         "lead_id": int(lead_id) if lead_id.isdigit() else lead_id,
         "buyer_id": int(buyer_id) if buyer_id.isdigit() else buyer_id,
         "escalation_phone": escalation_phone,
