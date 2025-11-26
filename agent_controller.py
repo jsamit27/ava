@@ -23,6 +23,8 @@ from all_tools import (
     get_all_cars,
     get_buyer_availability,
     add_buyer_schedule,
+    remove_buyer_schedule,
+    update_buyer_schedule,
     pickup_retrieve,
     pickup_add,
     pickup_update,
@@ -64,6 +66,19 @@ def _dispatch_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
 
     if name == "add_buyer_schedule":
         return add_buyer_schedule(buyer_id=SESSION.get("buyer_id"), sqlite_path=sp, patch=args)
+
+    if name == "remove_buyer_schedule":
+        schedule_time = args.get("schedule_time", "")
+        return remove_buyer_schedule(buyer_id=SESSION.get("buyer_id"), sqlite_path=sp, schedule_time=schedule_time)
+
+    if name == "update_buyer_schedule":
+        schedule_time = args.get("schedule_time", "")
+        # Extract schedule_time and use rest as patch
+        patch = {k: v for k, v in args.items() if k != "schedule_time" and v is not None}
+        # Map new_schedule_time to schedule_time in patch
+        if "new_schedule_time" in patch:
+            patch["schedule_time"] = patch.pop("new_schedule_time")
+        return update_buyer_schedule(buyer_id=SESSION.get("buyer_id"), sqlite_path=sp, schedule_time=schedule_time, patch=patch)
 
     if name == "pickup_retrieve":
         return pickup_retrieve(pick_up_id=args.get("pick_up_id"), sqlite_path=sp)
@@ -154,13 +169,16 @@ def controller_turn(ava: AvaClient, user_msg: str, logs: List[Dict[str, Any]]) -
         return f"{msg or 'That did not work.'}"
 
     # For successful tool results, send back to Ava to generate natural response
+
+    # This is the scond call to ava after tools gave some output 
+    
     tool_result_prompt = f"""The user asked: "{user_msg}"
 
-I called the tool '{name}' and got this result:
-{result}
+            I called the tool '{name}' and got this result:
+            {result}
 
-Please provide a natural, conversational response to the user's question based on this tool result. Be concise and directly answer what they asked. Return ONLY the response text, no JSON, no code blocks, just plain conversational text."""
-    
+            Please provide a natural, conversational response to the user's question based on this tool result. Be concise and directly answer what they asked. Return ONLY the response text, no JSON, no code blocks, just plain conversational text."""
+                
     # Log message sent to Ava (response generation)
     log_msg = f"[TO AVA - RESPONSE GEN] Sending tool result for natural response generation"
     logger.info(log_msg)

@@ -200,6 +200,239 @@ def add_buyer_schedule(
         try: conn.close()
         except Exception: pass
 
+#-------------------------------------------------
+
+#-----------------REMOVE BUYER SCHEDULE----------------------
+
+#-------------------------------------------------
+
+def remove_buyer_schedule(
+    buyer_id: int,
+    sqlite_path: str,
+    schedule_time: str,
+) -> Dict[str, Any]:
+    """
+    Remove a buyer schedule by schedule_time.
+    Finds the schedule by buyer_id + schedule_time and deletes it.
+    Returns: {"status":"success|error","message":str,"data":{...},["code":str]}
+    """
+    # validate buyer_id
+    try:
+        buyer_id = int(buyer_id)
+    except Exception:
+        return {"status":"error","code":"INVALID_INPUT","message":"buyer_id must be an integer.","data":{"received": buyer_id}}
+    
+    # validate schedule_time
+    st = _dt_str(schedule_time)
+    if not st:
+        return {"status":"error","code":"INVALID_INPUT","message":"schedule_time is invalid.","data":{"received": str(schedule_time)}}
+
+    # DB work
+    try:
+        conn, is_pg = get_db_connection(sqlite_path)
+    except Exception as e:
+        return {"status":"error","code":"DB_UNAVAILABLE","message":f"Could not open database: {e}","data":{}}
+
+    try:
+        # ensure buyer exists
+        cur = execute_query(conn, is_pg, "SELECT 1 FROM buyers WHERE id = ? LIMIT 1", (buyer_id,))
+        if cur.fetchone() is None:
+            return {"status":"error","code":"NOT_FOUND","message":f"Buyer id {buyer_id} not found.","data":{}}
+
+        # find the schedule
+        cur = execute_query(conn, is_pg, """
+            SELECT id, buyer_id, description, schedule_time, priority
+            FROM buyer_schedule
+            WHERE buyer_id = ? AND schedule_time = ?
+            LIMIT 1
+        """, (buyer_id, st))
+        existing = cur.fetchone()
+        
+        if not existing:
+            return {
+                "status": "error",
+                "code": "NOT_FOUND",
+                "message": f"No schedule found at {st} for this buyer.",
+                "data": {"buyer_id": buyer_id, "schedule_time": st}
+            }
+        
+        existing_dict = dict(existing)
+        schedule_id = existing_dict["id"]
+        
+        # delete the schedule
+        cur = execute_query(conn, is_pg, "DELETE FROM buyer_schedule WHERE id = ?", (schedule_id,))
+        conn.commit()
+        
+        if cur.rowcount > 0:
+            return {
+                "status": "success",
+                "message": f"Schedule removed successfully.",
+                "data": {"removed_schedule": existing_dict}
+            }
+        else:
+            return {
+                "status": "error",
+                "code": "TXN_FAILED",
+                "message": "Failed to remove schedule.",
+                "data": {}
+            }
+
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        return {"status":"error","code":"TXN_FAILED","message":f"Delete failed: {e}","data":{}}
+
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+#-------------------------------------------------
+
+#-----------------UPDATE BUYER SCHEDULE----------------------
+
+#-------------------------------------------------
+
+def update_buyer_schedule(
+    buyer_id: int,
+    sqlite_path: str,
+    schedule_time: str,
+    patch: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Update a buyer schedule by schedule_time.
+    Finds the schedule by buyer_id + schedule_time, then updates it with patch.
+    Patch can contain: description, schedule_time (new time), priority
+    Returns: {"status":"success|error","message":str,"data":{...},["code":str]}
+    """
+    # validate buyer_id
+    try:
+        buyer_id = int(buyer_id)
+    except Exception:
+        return {"status":"error","code":"INVALID_INPUT","message":"buyer_id must be an integer.","data":{"received": buyer_id}}
+    
+    if not isinstance(patch, dict) or not patch:
+        return {"status":"error","code":"INVALID_INPUT","message":"patch must be a non-empty object.","data":{}}
+    
+    # validate schedule_time (to find the schedule)
+    st = _dt_str(schedule_time)
+    if not st:
+        return {"status":"error","code":"INVALID_INPUT","message":"schedule_time is invalid.","data":{"received": str(schedule_time)}}
+
+    # DB work
+    try:
+        conn, is_pg = get_db_connection(sqlite_path)
+    except Exception as e:
+        return {"status":"error","code":"DB_UNAVAILABLE","message":f"Could not open database: {e}","data":{}}
+
+    try:
+        # ensure buyer exists
+        cur = execute_query(conn, is_pg, "SELECT 1 FROM buyers WHERE id = ? LIMIT 1", (buyer_id,))
+        if cur.fetchone() is None:
+            return {"status":"error","code":"NOT_FOUND","message":f"Buyer id {buyer_id} not found.","data":{}}
+
+        # find the schedule
+        cur = execute_query(conn, is_pg, """
+            SELECT id, buyer_id, description, schedule_time, priority
+            FROM buyer_schedule
+            WHERE buyer_id = ? AND schedule_time = ?
+            LIMIT 1
+        """, (buyer_id, st))
+        existing = cur.fetchone()
+        
+        if not existing:
+            return {
+                "status": "error",
+                "code": "NOT_FOUND",
+                "message": f"No schedule found at {st} for this buyer.",
+                "data": {"buyer_id": buyer_id, "schedule_time": st}
+            }
+        
+        schedule_id = dict(existing)["id"]
+        
+        # prepare updates (whitelist allowed fields)
+        ALLOWED_FIELDS = {"description", "schedule_time", "priority"}
+        sanitized = {k: v for k, v in patch.items() if k in ALLOWED_FIELDS}
+        
+        if not sanitized:
+            return {
+                "status": "error",
+                "code": "INVALID_INPUT",
+                "message": "No allowed fields to update. Allowed: description, schedule_time, priority",
+                "data": {"allowed_fields": sorted(ALLOWED_FIELDS)}
+            }
+        
+        # validate and format fields
+        updates = {}
+        if "description" in sanitized:
+            desc = str(sanitized["description"] or "").strip()
+            if desc:
+                updates["description"] = desc
+        
+        if "schedule_time" in sanitized:
+            new_st = _dt_str(sanitized["schedule_time"])
+            if new_st:
+                # Check if new time conflicts with another schedule
+                cur = execute_query(conn, is_pg, """
+                    SELECT id FROM buyer_schedule
+                    WHERE buyer_id = ? AND schedule_time = ? AND id != ?
+                    LIMIT 1
+                """, (buyer_id, new_st, schedule_id))
+                if cur.fetchone():
+                    return {
+                        "status": "error",
+                        "code": "TIME_ALREADY_BOOKED",
+                        "message": f"The buyer is already booked at {new_st}. Please choose another time.",
+                        "data": {"requested_time": new_st}
+                    }
+                updates["schedule_time"] = new_st
+        
+        if "priority" in sanitized:
+            pr = str(sanitized["priority"] or "Medium").strip().title()
+            if pr in PRIORITIES:
+                updates["priority"] = pr
+            else:
+                return {"status":"error","code":"INVALID_INPUT","message":f"priority must be one of {sorted(PRIORITIES)}","data":{"received": sanitized["priority"]}}
+        
+        if not updates:
+            return {
+                "status": "error",
+                "code": "INVALID_INPUT",
+                "message": "No valid fields to update.",
+                "data": {}
+            }
+        
+        # apply updates
+        updated_fields = 0
+        for field, value in updates.items():
+            cur = execute_query(conn, is_pg, f"UPDATE buyer_schedule SET {field} = ? WHERE id = ?", (value, schedule_id))
+            if cur.rowcount > 0:
+                updated_fields += 1
+        
+        conn.commit()
+        
+        # fetch updated schedule
+        cur = execute_query(conn, is_pg, "SELECT id, buyer_id, description, schedule_time, priority FROM buyer_schedule WHERE id = ?", (schedule_id,))
+        row = cur.fetchone()
+        
+        msg = f"Schedule updated ({updated_fields} fields)." if updated_fields else "No fields changed."
+        return {
+            "status": "success",
+            "message": msg,
+            "data": {"schedule": dict(row) if row else {"id": schedule_id}, "updated_fields": updated_fields}
+        }
+
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        msg = str(e).lower()
+        if "foreign key" in msg or "integrity" in msg:
+            return {"status":"error","code":"PRECONDITION_FAILED","message":"Invalid reference (foreign key).","data":{"buyer_id": buyer_id}}
+        return {"status":"error","code":"TXN_FAILED","message":f"Update failed: {e}","data":{}}
+
+    finally:
+        try: conn.close()
+        except Exception: pass
+
 PRIORITY = ["car_id", "vin", "model", "make", "year"]
 
 def car_retrieve(sqlite_path: str, query: Dict[str, Any]) -> Dict[str, Any]:

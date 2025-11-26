@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field
 from all_tools import (
     get_buyer_availability as _get_buyer_availability,
     add_buyer_schedule as _add_buyer_schedule,
+    remove_buyer_schedule as _remove_buyer_schedule,
+    update_buyer_schedule as _update_buyer_schedule,
     car_retrieve as _car_retrieve,
     car_update as _car_update,
     car_add as _car_add,
@@ -55,6 +57,45 @@ def add_buyer_schedule_tool(description: str,
         patch["priority"] = priority
     
     return _add_buyer_schedule(buyer_id=buyer_id, sqlite_path=SESSION["sqlite_path"], patch=patch)
+
+# -------- REMOVE BUYER SCHEDULE ------------
+
+class RemoveBuyerScheduleInput(BaseModel):
+    schedule_time: str
+
+@tool("remove_buyer_schedule", args_schema=RemoveBuyerScheduleInput, return_direct=False)
+def remove_buyer_schedule_tool(schedule_time: str):
+    """Remove or cancel a buyer's schedule by schedule time. Use this when a user wants to cancel, remove, or delete a scheduled meeting/appointment. Requires schedule_time to identify which schedule to remove."""
+    buyer_id = SESSION["buyer_id"]
+    return _remove_buyer_schedule(buyer_id=buyer_id, sqlite_path=SESSION["sqlite_path"], schedule_time=schedule_time)
+
+# -------- UPDATE BUYER SCHEDULE ------------
+
+class UpdateBuyerScheduleInput(BaseModel):
+    schedule_time: str  # The time of the schedule to update
+    description: Optional[str] = None
+    new_schedule_time: Optional[str] = None  # New time if rescheduling
+    priority: Optional[str] = None  # Low/Medium/High
+
+@tool("update_buyer_schedule", args_schema=UpdateBuyerScheduleInput, return_direct=False)
+def update_buyer_schedule_tool(schedule_time: str,
+                                description: Optional[str] = None,
+                                new_schedule_time: Optional[str] = None,
+                                priority: Optional[str] = None):
+    """Update or reschedule a buyer's existing schedule. Use this when a user wants to change, reschedule, or modify an existing meeting/appointment. Requires schedule_time to identify which schedule to update. Can update description, schedule_time (use new_schedule_time to reschedule), or priority."""
+    buyer_id = SESSION["buyer_id"]
+    patch = {}
+    if description is not None:
+        patch["description"] = description
+    if new_schedule_time is not None:
+        patch["schedule_time"] = new_schedule_time
+    if priority is not None:
+        patch["priority"] = priority
+    
+    if not patch:
+        return {"status": "error", "code": "INVALID_INPUT", "message": "At least one field (description, new_schedule_time, or priority) must be provided to update.", "data": {}}
+    
+    return _update_buyer_schedule(buyer_id=buyer_id, sqlite_path=SESSION["sqlite_path"], schedule_time=schedule_time, patch=patch)
 
 
 # --------------- CAR --------------------------
@@ -233,6 +274,8 @@ def send_escalate_message_tool(message_text: str) -> Dict[str, Any]:
 ALL_TOOLS = [
     get_buyer_availability_tool,
     add_buyer_schedule_tool,
+    remove_buyer_schedule_tool,
+    update_buyer_schedule_tool,
     car_retrieve_tool,
     car_update_tool,
     car_add_tool,

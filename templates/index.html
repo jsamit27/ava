@@ -265,13 +265,6 @@
         <div class="init-form" id="initForm">
             <h2>Initialize Session</h2>
             <div class="form-group">
-                <label for="sqlite_path">SQLite Database Path (Optional):</label>
-                <input type="text" id="sqlite_path" placeholder="e.g., sandbox_lead_1.db (not needed on Render)">
-                <small style="color: #6b7280; font-size: 13px; margin-top: 4px;">
-                    Leave empty if using PostgreSQL (Render). Only needed for local SQLite databases.
-                </small>
-            </div>
-            <div class="form-group">
                 <label for="lead_id">Lead ID:</label>
                 <input type="text" id="lead_id" placeholder="e.g., 1" required>
             </div>
@@ -300,7 +293,6 @@
         let sessionId = null;
         
         async function initSession() {
-            const sqlite_path = document.getElementById('sqlite_path').value.trim() || null;
             const lead_id = document.getElementById('lead_id').value;
             const buyer_id = document.getElementById('buyer_id').value;
             const escalation_phone = document.getElementById('escalation_phone').value;
@@ -313,7 +305,6 @@
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        sqlite_path: sqlite_path,
                         lead_id,
                         buyer_id,
                         escalation_phone

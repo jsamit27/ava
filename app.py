@@ -55,7 +55,6 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 class InitRequest(BaseModel):
-    sqlite_path: Optional[str] = None  # Optional - not needed if DATABASE_URL is set
     lead_id: str
     buyer_id: str
     escalation_phone: str
@@ -77,40 +76,30 @@ async def init_session(data: InitRequest):
     # Create new session
     session_id = str(uuid.uuid4())
     
-    # Check if DATABASE_URL is set (PostgreSQL on Render)
-    # If not, use SQLite file path
+    # Require DATABASE_URL (PostgreSQL on Render)
     db_connection = os.getenv("DATABASE_URL")
     if not db_connection:
-        # Using SQLite - sqlite_path is required
-        sqlite_path = (data.sqlite_path or "").strip()
-        if not sqlite_path:
-            raise HTTPException(status_code=400, detail="sqlite_path is required when DATABASE_URL is not set (local mode)")
-        # Verify file exists
-        if not os.path.exists(sqlite_path):
-            error_msg = f"Database file not found: {sqlite_path}. Make sure it exists in the repository."
-            logger.error(error_msg)
-            print(error_msg, flush=True)
-            raise HTTPException(status_code=400, detail=error_msg)
-        db_connection = sqlite_path
-        logger.info(f"[SESSION INIT] Using SQLite database: {sqlite_path}")
-    else:
-        logger.info(f"[SESSION INIT] Using PostgreSQL database (DATABASE_URL is set)")
+        error_msg = "DATABASE_URL environment variable is required. Please configure PostgreSQL database."
+        logger.error(error_msg)
+        print(error_msg, flush=True)
+        raise HTTPException(status_code=500, detail=error_msg)
+    
+    logger.info(f"[SESSION INIT] Using PostgreSQL database (DATABASE_URL is set)")
     
     # Store session data
     user_sessions[session_id] = {
-        "sqlite_path": db_connection,  # Can be SQLite path or PostgreSQL URL
+        "sqlite_path": db_connection,  # PostgreSQL URL (stored in sqlite_path for compatibility with tools)
         "lead_id": int(lead_id) if lead_id.isdigit() else lead_id,
         "buyer_id": int(buyer_id) if buyer_id.isdigit() else buyer_id,
         "escalation_phone": escalation_phone,
     }
     
-    # Initialize logs
+    # Initialize logs this is done session_id wise (each session_id gets its own logs so we can query the dictionary using session_id to get logs )
     user_logs[session_id] = []
     
     # Create Ava client
     try:
-        db_type = "PostgreSQL" if os.getenv("DATABASE_URL") else "SQLite"
-        log_msg = f"[SESSION INIT] Initializing session {session_id[:8]} - Database: {db_type}, lead_id: {lead_id}, buyer_id: {buyer_id}"
+        log_msg = f"[SESSION INIT] Initializing session {session_id[:8]} - Database: PostgreSQL, lead_id: {lead_id}, buyer_id: {buyer_id}"
         logger.info(log_msg)
         print(log_msg, flush=True)
         ava = get_or_create_ava_client(session_id)
