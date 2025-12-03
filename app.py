@@ -10,7 +10,6 @@ from typing import List, Dict, Any, Optional
 from ava_client import AvaClient
 from agent_controller import controller_turn
 from tools import SESSION
-import uuid
 
 # Configure logging to stdout (visible in Render logs)
 # Force logging to stdout/stderr so it appears in Render logs
@@ -38,15 +37,10 @@ user_sessions: Dict[str, Dict[str, Any]] = {}
 # Templates
 templates = Jinja2Templates(directory="templates")
 
-def get_or_create_ava_client(session_id: str) -> AvaClient:
-    """Get or create Ava client for a session."""
+def get_ava_client(session_id: str) -> AvaClient:
+    """Get Ava client for a session (session_id is now Ava's session_id)."""
     if session_id not in ava_clients:
-        USER = os.getenv("AVA_USER", "amit")
-        PASS = os.getenv("AVA_PASS", "sta6952907")
-        ava = AvaClient(USER, PASS)
-        ava.login()
-        ava.get_session(force_new=True)
-        ava_clients[session_id] = ava
+        raise HTTPException(status_code=400, detail="Session not found. Please initialize session first.")
     return ava_clients[session_id]
 
 @app.get("/", response_class=HTMLResponse)
@@ -73,9 +67,6 @@ async def init_session(data: InitRequest):
     if not all([lead_id, buyer_id, escalation_phone]):
         raise HTTPException(status_code=400, detail="lead_id, buyer_id, and escalation_phone are required")
     
-    # Create new session
-    session_id = str(uuid.uuid4())
-    
     # Require DATABASE_URL (PostgreSQL on Render)
     db_connection = os.getenv("DATABASE_URL")
     if not db_connection:
@@ -86,29 +77,39 @@ async def init_session(data: InitRequest):
     
     logger.info(f"[SESSION INIT] Using PostgreSQL database (DATABASE_URL is set)")
     
-    # Store session data
-    user_sessions[session_id] = {
-        "sqlite_path": db_connection,  # PostgreSQL URL (stored in sqlite_path for compatibility with tools)
-        "lead_id": int(lead_id) if lead_id.isdigit() else lead_id,
-        "buyer_id": int(buyer_id) if buyer_id.isdigit() else buyer_id,
-        "escalation_phone": escalation_phone,
-    }
-    
-    # Initialize logs this is done session_id wise (each session_id gets its own logs so we can query the dictionary using session_id to get logs )
-    user_logs[session_id] = []
-    
-    # Create Ava client
+    # Create Ava client and get Ava's session_id FIRST
     try:
-        log_msg = f"[SESSION INIT] Initializing session {session_id[:8]} - Database: PostgreSQL, lead_id: {lead_id}, buyer_id: {buyer_id}"
+        USER = os.getenv("AVA_USER", "amit")
+        PASS = os.getenv("AVA_PASS", "sta6952907")
+        ava = AvaClient(USER, PASS)
+        ava.login()
+        # Get Ava's session_id - this will be our primary key
+        ava_session_id = ava.get_session(force_new=True)
+        
+        log_msg = f"[SESSION INIT] Got Ava session_id: {ava_session_id[:8]} - Database: PostgreSQL, lead_id: {lead_id}, buyer_id: {buyer_id}"
         logger.info(log_msg)
         print(log_msg, flush=True)
-        ava = get_or_create_ava_client(session_id)
-        log_msg = f"[SESSION INIT] Session {session_id[:8]} initialized successfully"
+        
+        # Store session data using Ava's session_id as the key
+        user_sessions[ava_session_id] = {
+            "sqlite_path": db_connection,  # PostgreSQL URL (stored in sqlite_path for compatibility with tools)
+            "lead_id": int(lead_id) if lead_id.isdigit() else lead_id,
+            "buyer_id": int(buyer_id) if buyer_id.isdigit() else buyer_id,
+            "escalation_phone": escalation_phone,
+        }
+        
+        # Initialize logs using Ava's session_id
+        user_logs[ava_session_id] = []
+        
+        # Store AvaClient using Ava's session_id
+        ava_clients[ava_session_id] = ava
+        
+        log_msg = f"[SESSION INIT] Session {ava_session_id[:8]} initialized successfully"
         logger.info(log_msg)
         print(log_msg, flush=True)
-        return {"success": True, "session_id": session_id, "message": "Session initialized successfully"}
+        return {"success": True, "session_id": ava_session_id, "message": "Session initialized successfully"}
     except Exception as e:
-        error_msg = f"[SESSION INIT] Failed to initialize session {session_id[:8]}: {str(e)}"
+        error_msg = f"[SESSION INIT] Failed to initialize session: {str(e)}"
         logger.error(error_msg, exc_info=True)
         print(error_msg, flush=True)
         raise HTTPException(status_code=500, detail=f"Failed to initialize: {str(e)}")
@@ -141,7 +142,7 @@ async def chat(data: ChatRequest):
     print(log_msg, flush=True)  # Also print to ensure it shows in Render logs
     
     try:
-        ava = get_or_create_ava_client(session_id)
+        ava = get_ava_client(session_id)
         logs = user_logs.get(session_id, [])
         reply = controller_turn(ava, user_msg, logs)
         user_logs[session_id] = logs  # Update logs
