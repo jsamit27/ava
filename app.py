@@ -84,9 +84,11 @@ async def init_session(data: InitRequest):
         ava = AvaClient(USER, PASS)
         ava.login()
         # Get Ava's session_id - this will be our primary key
+        # Clear any existing session_id first to ensure we get a fresh one
+        ava.session_id = None
         ava_session_id = ava.get_session(force_new=True)
         
-        log_msg = f"[SESSION INIT] Got Ava session_id: {ava_session_id[:8]} - Database: PostgreSQL, lead_id: {lead_id}, buyer_id: {buyer_id}"
+        log_msg = f"[SESSION INIT] Got Ava session_id: {ava_session_id} (full ID) - Database: PostgreSQL, lead_id: {lead_id}, buyer_id: {buyer_id}"
         logger.info(log_msg)
         print(log_msg, flush=True)
         

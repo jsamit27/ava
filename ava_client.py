@@ -75,11 +75,28 @@ class AvaClient:
             self.login()
         url = f"https://prism.andrew-chat.com/api/v1/prism/get_session/{self.user}/ava"
         if force_new:
-            url += "?new=true"
-        r = requests.get(url, headers={"Authorization": self.token}, timeout=15)
+            # Add timestamp to force a truly new session (cache busting)
+            import time
+            url += f"?new=true&_t={int(time.time() * 1000)}"
+            log_msg = f"[AVA API] Requesting NEW session with force_new=True and cache-busting timestamp"
+            logger.info(log_msg)
+            print(log_msg, flush=True)
+        r = requests.get(url, headers={"Authorization": self.token}, timeout=30)
         r.raise_for_status()
         data = r.json()
-        self.session_id = str(data["id"])
+        new_session_id = str(data["id"])
+        
+        # Log if we got the same session_id as before
+        if self.session_id and new_session_id == self.session_id:
+            log_msg = f"[AVA API] WARNING: Got same session_id as before: {new_session_id[:8]} (Ava server may be reusing sessions)"
+            logger.warning(log_msg)
+            print(log_msg, flush=True)
+        else:
+            log_msg = f"[AVA API] Got session_id: {new_session_id[:8]} (previous: {self.session_id[:8] if self.session_id else 'none'})"
+            logger.info(log_msg)
+            print(log_msg, flush=True)
+        
+        self.session_id = new_session_id
         return self.session_id
 
     # Optional no-ops so your CLI doesn't break
