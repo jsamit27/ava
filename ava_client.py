@@ -69,16 +69,54 @@ class AvaClient:
         self.token = r.json()["authorization"]
         return self.token
 
+    def close_session(self, session_id: Optional[str] = None) -> bool:
+        """Close/delete an Ava session. Returns True if successful, False otherwise."""
+        if not self.token:
+            self.login()
+        
+        session_to_close = session_id or self.session_id
+        if not session_to_close:
+            log_msg = "[AVA API] No session_id to close"
+            logger.info(log_msg)
+            print(log_msg, flush=True)
+            return False
+        
+        try:
+            url = f"https://ava.andrew-chat.com/api/v1/session/{self.user}"
+            payload = {"session_id": session_to_close}
+            r = requests.post(
+                url,
+                headers={"Authorization": self.token, "Content-Type": "application/json"},
+                data=json.dumps(payload),
+                timeout=15
+            )
+            r.raise_for_status()
+            log_msg = f"[AVA API] Successfully closed session: {session_to_close[:8]}"
+            logger.info(log_msg)
+            print(log_msg, flush=True)
+            return True
+        except Exception as e:
+            log_msg = f"[AVA API] Failed to close session {session_to_close[:8]}: {e}"
+            logger.warning(log_msg)
+            print(log_msg, flush=True)
+            return False
+
     def get_session(self, *, force_new: bool = False) -> str:
         """GET Prism session id as a string."""
         if not self.token:
             self.login()
+        
+        # If force_new and we have an existing session, close it first
+        if force_new and self.session_id:
+            log_msg = f"[AVA API] Closing existing session {self.session_id[:8]} before creating new one"
+            logger.info(log_msg)
+            print(log_msg, flush=True)
+            self.close_session()
+            self.session_id = None  # Clear it after closing
+        
         url = f"https://prism.andrew-chat.com/api/v1/prism/get_session/{self.user}/ava"
         if force_new:
-            # Add timestamp to force a truly new session (cache busting)
-            import time
-            url += f"?new=true&_t={int(time.time() * 1000)}"
-            log_msg = f"[AVA API] Requesting NEW session with force_new=True and cache-busting timestamp"
+            log_msg = f"[AVA API] Requesting NEW session with force_new=True"
             logger.info(log_msg)
             print(log_msg, flush=True)
         r = requests.get(url, headers={"Authorization": self.token}, timeout=30)
@@ -108,10 +146,10 @@ class AvaClient:
         """No-op: ask_once closes WS per call."""
         return
 
-    # ---------- Chat once ----------
-    def ask_once(self, prompt: str) -> str:
+    def _send_message(self, prompt: str) -> Optional[str]:
         """
-        Send one user message and return concatenated reply text.
+        Internal method to send a message and get response.
+        Returns response text or None if no response.
         Tries minimal payload, falls back to legacy payload if needed.
         """
         if not self.token:
@@ -120,70 +158,131 @@ class AvaClient:
             self.get_session()
 
         # Attempt 1: minimal schema
-        ws = create_connection(
-            f"wss://ava.andrew-chat.com/api/v1/stream?token={self.token}",
-            header=["Origin: https://ava.andrew-chat.com"],
-        )
-        minimal = {
-            "user_id": self.user,
-            "session_id": self.session_id,  # string
-            "message": prompt,
-        }
+        try:
+            ws = create_connection(
+                f"wss://ava.andrew-chat.com/api/v1/stream?token={self.token}",
+                header=["Origin: https://ava.andrew-chat.com"],
+            )
+            minimal = {
+                "user_id": self.user,
+                "session_id": self.session_id,
+                "message": prompt,
+            }
+            
+            ws.send(json.dumps(minimal, separators=(",", ":")))
+            text, bad = _read_stream(ws)
+            ws.close()
+            if not bad and text:
+                return text
+        except Exception as e:
+            log_msg = f"[AVA API] Minimal payload error: {e}"
+            logger.warning(log_msg)
+            print(log_msg, flush=True)
+
+        # Attempt 2: legacy payload
+        try:
+            ws = create_connection(
+                f"wss://ava.andrew-chat.com/api/v1/stream?token={self.token}",
+                header=["Origin: https://ava.andrew-chat.com"],
+            )
+            legacy = {
+                "action": "create",
+                "message": prompt,
+                "user_id": self.user,
+                "session_id": self.session_id,
+                "car": {
+                    "vin": "",
+                    "year": -1,
+                    "make": "",
+                    "model": "",
+                    "trim": "",
+                    "mileage": -1,
+                    "condition": 0,
+                    "color": "blue",
+                    "region": "WC",
+                },
+            }
+            ws.send(json.dumps(legacy, separators=(",", ":")))
+            text2, _ = _read_stream(ws)
+            ws.close()
+            if text2:
+                return text2
+        except Exception as e:
+            log_msg = f"[AVA API] Legacy payload error: {e}"
+            logger.warning(log_msg)
+            print(log_msg, flush=True)
         
+        return None
+
+    # ---------- Chat once ----------
+    def ask_once(self, prompt: str) -> str:
+        """
+        Send one user message and return concatenated reply text.
+        Implements retry logic with session recreation ONLY when no response.
+        Retry flow:
+        1. Try to get response
+        2. If no response, retry once
+        3. If still no response, close session, create new session with same user_id, retry
+        4. If still no response, close session, create new session, retry again
+        """
         # Log what we're sending to Ava API
-        log_msg = f"[AVA API] Sending message to Ava (session: {self.session_id[:8]}, length: {len(prompt)} chars)"
+        log_msg = f"[AVA API] Sending message to Ava (user: {self.user}, session: {self.session_id[:8] if self.session_id else 'none'}, length: {len(prompt)} chars)"
         logger.info(log_msg)
         print(log_msg, flush=True)
         logger.debug(f"[AVA API] Message preview: {prompt[:300]}...")
         
-        ws.send(json.dumps(minimal, separators=(",", ":")))
-        text, bad = _read_stream(ws)
-        ws.close()
-        if not bad and text:
-            # Log what we received from Ava API
-            log_msg = f"[AVA API] Received response from Ava (length: {len(text)} chars)"
+        # Attempt 1: Try to get response
+        response = self._send_message(prompt)
+        if response:
+            log_msg = f"[AVA API] Received response from Ava (length: {len(response)} chars)"
             logger.info(log_msg)
             print(log_msg, flush=True)
-            logger.debug(f"[AVA API] Response preview: {text[:300]}...")
-            return text
-
-        # Attempt 2: legacy payload (temporary server requirement)
-        log_msg = f"[AVA API] Minimal payload failed, trying legacy payload"
-        logger.info(log_msg)
+            logger.debug(f"[AVA API] Response preview: {response[:300]}...")
+            return response
+        
+        # Attempt 2: Retry once (session might be temporarily stuck)
+        log_msg = f"[AVA API] No response on first attempt, retrying once..."
+        logger.warning(log_msg)
         print(log_msg, flush=True)
-        ws = create_connection(
-            f"wss://ava.andrew-chat.com/api/v1/stream?token={self.token}",
-            header=["Origin: https://ava.andrew-chat.com"],
-        )
-        legacy = {
-            "action": "create",
-            "message": prompt,
-            "user_id": self.user,
-            "session_id": self.session_id,
-            "car": {
-                "vin": "",
-                "year": -1,
-                "make": "",
-                "model": "",
-                "trim": "",
-                "mileage": -1,
-                "condition": 0,
-                "color": "blue",
-                "region": "WC",
-            },
-        }
-        ws.send(json.dumps(legacy, separators=(",", ":")))
-        text2, _ = _read_stream(ws)
-        ws.close()
-        
-        if text2:
-            log_msg = f"[AVA API] Received response via legacy payload (length: {len(text2)} chars)"
+        response = self._send_message(prompt)
+        if response:
+            log_msg = f"[AVA API] Received response on retry (length: {len(response)} chars)"
             logger.info(log_msg)
             print(log_msg, flush=True)
-            logger.debug(f"[AVA API] Response preview: {text2[:300]}...")
-        else:
-            log_msg = f"[AVA API] No response received from Ava"
-            logger.warning(log_msg)
-            print(log_msg, flush=True)
+            return response
         
-        return text2 or "Sorry—no response from Ava."
+        # Attempt 3: Session might be "filled" - close it and create new one with same user_id
+        log_msg = f"[AVA API] No response after retry, session may be filled. Closing session and creating new one with user_id={self.user}..."
+        logger.warning(log_msg)
+        print(log_msg, flush=True)
+        if self.session_id:
+            self.close_session()
+        self.session_id = None
+        self.get_session(force_new=True)
+        response = self._send_message(prompt)
+        if response:
+            log_msg = f"[AVA API] Received response after session recreation (length: {len(response)} chars)"
+            logger.info(log_msg)
+            print(log_msg, flush=True)
+            return response
+        
+        # Attempt 4: Close session again, create new session, retry one more time
+        log_msg = f"[AVA API] Still no response, closing session again and creating new one for final retry (user_id={self.user})..."
+        logger.warning(log_msg)
+        print(log_msg, flush=True)
+        if self.session_id:
+            self.close_session()
+        self.session_id = None
+        self.get_session(force_new=True)
+        response = self._send_message(prompt)
+        if response:
+            log_msg = f"[AVA API] Received response after second session recreation (length: {len(response)} chars)"
+            logger.info(log_msg)
+            print(log_msg, flush=True)
+            return response
+        
+        # All attempts failed
+        log_msg = f"[AVA API] All retry attempts failed, no response from Ava"
+        logger.error(log_msg)
+        print(log_msg, flush=True)
+        return "Sorry—no response from Ava after multiple attempts. Please try again."

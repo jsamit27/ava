@@ -77,36 +77,58 @@ async def init_session(data: InitRequest):
     
     logger.info(f"[SESSION INIT] Using PostgreSQL database (DATABASE_URL is set)")
     
-    # Create Ava client and get Ava's session_id FIRST
+    # Create Ava client using lead_id as the user_id
+    # This ensures each lead gets their own conversation context
     try:
-        USER = os.getenv("AVA_USER", "amit")
+        # Use lead_id as the user identifier for Ava sessions
+        lead_id_str = str(lead_id)
         PASS = os.getenv("AVA_PASS", "sta6952907")
-        ava = AvaClient(USER, PASS)
-        ava.login()
-        # Get Ava's session_id - this will be our primary key
-        # Clear any existing session_id first to ensure we get a fresh one
-        ava.session_id = None
-        ava_session_id = ava.get_session(force_new=True)
         
-        log_msg = f"[SESSION INIT] Got Ava session_id: {ava_session_id} (full ID) - Database: PostgreSQL, lead_id: {lead_id}, buyer_id: {buyer_id}"
+        log_msg = f"[SESSION INIT] Creating Ava session with user_id={lead_id_str} (lead_id)"
         logger.info(log_msg)
         print(log_msg, flush=True)
         
-        # Store session data using Ava's session_id as the key
-        user_sessions[ava_session_id] = {
-            "sqlite_path": db_connection,  # PostgreSQL URL (stored in sqlite_path for compatibility with tools)
-            "lead_id": int(lead_id) if lead_id.isdigit() else lead_id,
-            "buyer_id": int(buyer_id) if buyer_id.isdigit() else buyer_id,
-            "escalation_phone": escalation_phone,
-        }
+        # Check if we already have a session for this lead_id
+        # Look for existing session by checking if any ava_clients has this user_id
+        existing_session_id = None
+        for sess_id, ava_client in ava_clients.items():
+            if ava_client.user == lead_id_str:
+                existing_session_id = sess_id
+                log_msg = f"[SESSION INIT] Found existing session {sess_id[:8]} for lead_id={lead_id_str}, reusing it"
+                logger.info(log_msg)
+                print(log_msg, flush=True)
+                break
         
-        # Initialize logs using Ava's session_id
-        user_logs[ava_session_id] = []
+        if existing_session_id:
+            # Reuse existing session - don't create a new one
+            ava = ava_clients[existing_session_id]
+            ava_session_id = existing_session_id
+        else:
+            # Create new AvaClient with lead_id as user_id
+            ava = AvaClient(lead_id_str, PASS)  # Use lead_id as user_id
+            ava.login()
+            # Get Ava's session_id - this will be our primary key
+            ava_session_id = ava.get_session(force_new=True)
+            
+            log_msg = f"[SESSION INIT] Created new Ava session_id: {ava_session_id} (full ID) for lead_id={lead_id_str}"
+            logger.info(log_msg)
+            print(log_msg, flush=True)
+            
+            # Store session data using Ava's session_id as the key
+            user_sessions[ava_session_id] = {
+                "sqlite_path": db_connection,  # PostgreSQL URL (stored in sqlite_path for compatibility with tools)
+                "lead_id": int(lead_id) if lead_id.isdigit() else lead_id,
+                "buyer_id": int(buyer_id) if buyer_id.isdigit() else buyer_id,
+                "escalation_phone": escalation_phone,
+            }
+            
+            # Initialize logs using Ava's session_id
+            user_logs[ava_session_id] = []
+            
+            # Store AvaClient using Ava's session_id
+            ava_clients[ava_session_id] = ava
         
-        # Store AvaClient using Ava's session_id
-        ava_clients[ava_session_id] = ava
-        
-        log_msg = f"[SESSION INIT] Session {ava_session_id[:8]} initialized successfully"
+        log_msg = f"[SESSION INIT] Session {ava_session_id[:8]} initialized successfully for lead_id={lead_id}, buyer_id={buyer_id}"
         logger.info(log_msg)
         print(log_msg, flush=True)
         return {"success": True, "session_id": ava_session_id, "message": "Session initialized successfully"}
