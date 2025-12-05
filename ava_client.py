@@ -73,7 +73,7 @@ class AvaClient:
             "https://ava.andrew-chat.com/api/v1/user",
             headers={"Content-Type": "application/json"},
             data=json.dumps({"username": self.ava_username, "password": self._ava_password}),
-            timeout=15,
+            timeout=30,
         )
         r.raise_for_status()
         self.token = r.json()["authorization"]
@@ -98,7 +98,7 @@ class AvaClient:
                 url,
                 headers={"Authorization": self.token, "Content-Type": "application/json"},
                 data=json.dumps(payload),
-                timeout=15
+                timeout=30
             )
             r.raise_for_status()
             log_msg = f"[AVA API] Successfully closed session: {session_to_close[:8]}"
