@@ -46,23 +46,33 @@ def _read_stream(ws) -> Tuple[str, bool]:
 
 
 class AvaClient:
-    def __init__(self, user: str, password: Optional[str] = None, *, token: Optional[str] = None):
-        self.user = user
-        self._password = password
+    def __init__(self, user_id: str, ava_username: str = "amit", ava_password: Optional[str] = None, *, token: Optional[str] = None):
+        """
+        Initialize AvaClient.
+        
+        Args:
+            user_id: The user ID to use for sessions and messages (typically lead_id)
+            ava_username: Ava account username for login (default: "amit")
+            ava_password: Ava account password for login
+            token: Optional pre-existing auth token
+        """
+        self.user_id = user_id  # Used for sessions and WebSocket messages
+        self.ava_username = ava_username  # Used for login
+        self._ava_password = ava_password  # Used for login
         self.token = token
         self.session_id: Optional[str] = None  # keep as string
 
     # ---------- Auth / session ----------
     def login(self) -> str:
-        """POST /api/v1/user -> authorization token."""
+        """POST /api/v1/user -> authorization token. Uses ava_username and ava_password for login."""
         if self.token:
             return self.token
-        if not self._password:
+        if not self._ava_password:
             raise RuntimeError("No password provided and no token set.")
         r = requests.post(
             "https://ava.andrew-chat.com/api/v1/user",
             headers={"Content-Type": "application/json"},
-            data=json.dumps({"username": self.user, "password": self._password}),
+            data=json.dumps({"username": self.ava_username, "password": self._ava_password}),
             timeout=15,
         )
         r.raise_for_status()
@@ -82,7 +92,7 @@ class AvaClient:
             return False
         
         try:
-            url = f"https://ava.andrew-chat.com/api/v1/session/{self.user}"
+            url = f"https://ava.andrew-chat.com/api/v1/session/{self.user_id}"
             payload = {"session_id": session_to_close}
             r = requests.post(
                 url,
@@ -114,7 +124,7 @@ class AvaClient:
             self.close_session()
             self.session_id = None  # Clear it after closing
         
-        url = f"https://prism.andrew-chat.com/api/v1/prism/get_session/{self.user}/ava"
+        url = f"https://prism.andrew-chat.com/api/v1/prism/get_session/{self.user_id}/ava"
         if force_new:
             log_msg = f"[AVA API] Requesting NEW session with force_new=True"
             logger.info(log_msg)
@@ -164,7 +174,7 @@ class AvaClient:
                 header=["Origin: https://ava.andrew-chat.com"],
             )
             minimal = {
-                "user_id": self.user,
+                "user_id": self.user_id,
                 "session_id": self.session_id,
                 "message": prompt,
             }
@@ -188,7 +198,7 @@ class AvaClient:
             legacy = {
                 "action": "create",
                 "message": prompt,
-                "user_id": self.user,
+                "user_id": self.user_id,
                 "session_id": self.session_id,
                 "car": {
                     "vin": "",
@@ -226,7 +236,7 @@ class AvaClient:
         4. If still no response, close session, create new session, retry again
         """
         # Log what we're sending to Ava API
-        log_msg = f"[AVA API] Sending message to Ava (user: {self.user}, session: {self.session_id[:8] if self.session_id else 'none'}, length: {len(prompt)} chars)"
+        log_msg = f"[AVA API] Sending message to Ava (user_id: {self.user_id}, session: {self.session_id[:8] if self.session_id else 'none'}, length: {len(prompt)} chars)"
         logger.info(log_msg)
         print(log_msg, flush=True)
         logger.debug(f"[AVA API] Message preview: {prompt[:300]}...")
@@ -252,7 +262,7 @@ class AvaClient:
             return response
         
         # Attempt 3: Session might be "filled" - close it and create new one with same user_id
-        log_msg = f"[AVA API] No response after retry, session may be filled. Closing session and creating new one with user_id={self.user}..."
+        log_msg = f"[AVA API] No response after retry, session may be filled. Closing session and creating new one with user_id={self.user_id}..."
         logger.warning(log_msg)
         print(log_msg, flush=True)
         if self.session_id:
@@ -267,7 +277,7 @@ class AvaClient:
             return response
         
         # Attempt 4: Close session again, create new session, retry one more time
-        log_msg = f"[AVA API] Still no response, closing session again and creating new one for final retry (user_id={self.user})..."
+        log_msg = f"[AVA API] Still no response, closing session again and creating new one for final retry (user_id={self.user_id})..."
         logger.warning(log_msg)
         print(log_msg, flush=True)
         if self.session_id:

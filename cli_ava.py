@@ -22,12 +22,14 @@ def main():
     SESSION["escalation_phone"] = escalation_phone
 
     # Ava creds (from your message)
-    USER = os.getenv("AVA_USER", "amit")
-    PASS = os.getenv("AVA_PASS", "sta6952907")
-
-    # AvaClient is a class, it has login, getsessions etc as methods in the class 
+    AVA_USER = os.getenv("AVA_USER", "amit")
+    AVA_PASS = os.getenv("AVA_PASS", "sta6952907")
     
-    ava = AvaClient(USER, PASS)
+    # Use lead_id as user_id for sessions, but "amit" + password for login
+    lead_id_str = str(SESSION["lead_id"])
+    
+    # AvaClient is a class, it has login, getsessions etc as methods in the class 
+    ava = AvaClient(user_id=lead_id_str, ava_username=AVA_USER, ava_password=AVA_PASS)
     ava.login()
     ava.get_session(force_new=True)
     ava.connect_ws()

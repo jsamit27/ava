@@ -77,14 +77,15 @@ async def init_session(data: InitRequest):
     
     logger.info(f"[SESSION INIT] Using PostgreSQL database (DATABASE_URL is set)")
     
-    # Create Ava client using lead_id as the user_id
-    # This ensures each lead gets their own conversation context
+    # Create Ava client using lead_id as the user_id for sessions
+    # Login uses "amit" + password from env
     try:
         # Use lead_id as the user identifier for Ava sessions
         lead_id_str = str(lead_id)
-        PASS = os.getenv("AVA_PASS", "sta6952907")
+        AVA_USER = os.getenv("AVA_USER", "amit")
+        AVA_PASS = os.getenv("AVA_PASS", "sta6952907")
         
-        log_msg = f"[SESSION INIT] Creating Ava session with user_id={lead_id_str} (lead_id)"
+        log_msg = f"[SESSION INIT] Creating Ava session with user_id={lead_id_str} (lead_id), login username={AVA_USER}"
         logger.info(log_msg)
         print(log_msg, flush=True)
         
@@ -92,7 +93,7 @@ async def init_session(data: InitRequest):
         # Look for existing session by checking if any ava_clients has this user_id
         existing_session_id = None
         for sess_id, ava_client in ava_clients.items():
-            if ava_client.user == lead_id_str:
+            if ava_client.user_id == lead_id_str:
                 existing_session_id = sess_id
                 log_msg = f"[SESSION INIT] Found existing session {sess_id[:8]} for lead_id={lead_id_str}, reusing it"
                 logger.info(log_msg)
@@ -104,8 +105,8 @@ async def init_session(data: InitRequest):
             ava = ava_clients[existing_session_id]
             ava_session_id = existing_session_id
         else:
-            # Create new AvaClient with lead_id as user_id
-            ava = AvaClient(lead_id_str, PASS)  # Use lead_id as user_id
+            # Create new AvaClient: lead_id for sessions, "amit" + password for login
+            ava = AvaClient(user_id=lead_id_str, ava_username=AVA_USER, ava_password=AVA_PASS)
             ava.login()
             # Get Ava's session_id - this will be our primary key
             ava_session_id = ava.get_session(force_new=True)
