@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from ava_client import AvaClient
 from agent_controller import controller_turn
-from tools import SESSION
+# Removed SESSION import - now using session_data parameter instead
 
 # Configure logging to stdout (visible in Render logs)
 # Force logging to stdout/stderr so it appears in Render logs
@@ -29,9 +29,10 @@ logging.getLogger().setLevel(logging.INFO)
 
 app = FastAPI()
 
-# Store Ava clients and logs per session
+# Store Ava clients and logs per session 
+# RIGHT NOW THESE ARE BEING STORED IN MEMORY IN FUTURE SHOULD BE MOVED TO SOMETHING LIKE REDIS CACHE 
 ava_clients: Dict[str, AvaClient] = {}
-user_logs: Dict[str, List[Dict[str, Any]]] = {}
+user_logs: Dict[str, List[Dict[str, Any]]] = {}  # THIS MIGHT NOT BE NEEDED AS SESSION IN VERTEX AI STORES THE LOGS SO IN FUTURE I NEED TO REMOVE THIS 
 user_sessions: Dict[str, Dict[str, Any]] = {}
 
 # Templates
@@ -67,8 +68,9 @@ async def init_session(data: InitRequest):
     if not all([lead_id, buyer_id, escalation_phone]):
         raise HTTPException(status_code=400, detail="lead_id, buyer_id, and escalation_phone are required")
     
-    # Require DATABASE_URL (PostgreSQL on Render)
+    # Require DATABASE_URL (PostgreSQL on Render) here we are connecting to database in future this shoud be EDITED 
     db_connection = os.getenv("DATABASE_URL")
+
     if not db_connection:
         error_msg = "DATABASE_URL environment variable is required. Please configure PostgreSQL database."
         logger.error(error_msg)
@@ -107,7 +109,7 @@ async def init_session(data: InitRequest):
         else:
             # Create new AvaClient: lead_id for sessions, "amit" + password for login
             ava = AvaClient(user_id=lead_id_str, ava_username=AVA_USER, ava_password=AVA_PASS)
-            ava.login()
+            ava.login() # THIS IS BASICALLY USED TO GET A TOKEN USING MY USERNAME AND PASSWORD NOT THE LEAD ID WITH THAT WE CAN CREATE A SESSION
             # Get Ava's session_id - this will be our primary key
             ava_session_id = ava.get_session(force_new=True)
             
@@ -147,17 +149,15 @@ async def chat(data: ChatRequest):
     if not session_id or session_id not in user_sessions:
         raise HTTPException(status_code=400, detail="Invalid or missing session_id. Please initialize session first.")
     
-    # Restore SESSION for this user
+    # Get session data for this user
+    # THIS BASICALY HAS THE SQL PATH, LEAD ID , BUYER ID AND ESCALATE PHONE NUMBER 
     sess_data = user_sessions[session_id]
-    SESSION["sqlite_path"] = sess_data["sqlite_path"]
-    SESSION["lead_id"] = sess_data["lead_id"]
-    SESSION["buyer_id"] = sess_data["buyer_id"]
-    SESSION["escalation_phone"] = sess_data["escalation_phone"]
     
     user_msg = data.message.strip()
     if not user_msg:
         raise HTTPException(status_code=400, detail="Message is required")
     
+    # HERE I HAVE TO CLOSE THE SESSION NEED TO DO NEXT 
     if user_msg.lower() in ("exit", "quit"):
         return {"reply": "Session ended. Thank you!"}
     
@@ -167,9 +167,10 @@ async def chat(data: ChatRequest):
     print(log_msg, flush=True)  # Also print to ensure it shows in Render logs
     
     try:
-        ava = get_ava_client(session_id)
+        ava = get_ava_client(session_id) # EXTRA FUNCTION TO GET AVA CLASS USING SESSION_ID IT CHECKS THE IN MEMORY DICTIONARY TO GET THE AVA CLIENT CORRESPONDING TO THAT PARTICULAR SESSION ID 
         logs = user_logs.get(session_id, [])
-        reply = controller_turn(ava, user_msg, logs)
+        # Pass session_data directly instead of using global SESSION
+        reply = controller_turn(ava, user_msg, logs, sess_data)
         user_logs[session_id] = logs  # Update logs
         
         # Log Ava's response (both logger and print for visibility)

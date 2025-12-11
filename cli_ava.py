@@ -3,7 +3,7 @@ import os
 from typing import List, Dict, Any
 from ava_client import AvaClient
 from agent_controller import controller_turn
-from tools import SESSION  # uses your existing global
+# Removed SESSION import - now using session_data parameter instead
 
 def main():
     print("Enter beta DB sqlite_path:", end=" ")
@@ -15,18 +15,22 @@ def main():
     print("Enter escalation phone number:", end=" ")
     escalation_phone = input().strip()
 
-    # set session for tools
-    SESSION["sqlite_path"] = sqlite_path
-    SESSION["lead_id"] = int(lead_id) if lead_id.isdigit() else lead_id
-    SESSION["buyer_id"] = int(buyer_id) if buyer_id.isdigit() else buyer_id
-    SESSION["escalation_phone"] = escalation_phone
+    # Prepare session data (no longer using global SESSION)
+    lead_id_int = int(lead_id) if lead_id.isdigit() else lead_id
+    buyer_id_int = int(buyer_id) if buyer_id.isdigit() else buyer_id
+    session_data = {
+        "sqlite_path": sqlite_path,
+        "lead_id": lead_id_int,
+        "buyer_id": buyer_id_int,
+        "escalation_phone": escalation_phone,
+    }
 
     # Ava creds (from your message)
     AVA_USER = os.getenv("AVA_USER", "amit")
     AVA_PASS = os.getenv("AVA_PASS", "sta6952907")
     
     # Use lead_id as user_id for sessions, but "amit" + password for login
-    lead_id_str = str(SESSION["lead_id"])
+    lead_id_str = str(lead_id_int)
     
     # AvaClient is a class, it has login, getsessions etc as methods in the class 
     ava = AvaClient(user_id=lead_id_str, ava_username=AVA_USER, ava_password=AVA_PASS)
@@ -50,7 +54,7 @@ def main():
             continue
 
         try:
-            reply = controller_turn(ava, user, logs)
+            reply = controller_turn(ava, user, logs, session_data)
             print(f"Ava: {reply}\n")
         except Exception as e:
             print("Ava (error):", e)

@@ -18,31 +18,67 @@ logger = logging.getLogger(__name__)
 
 END_MARKER = "<<END_OF_RESPONSE>>"
 
-def _read_stream(ws) -> Tuple[str, bool]:
+import json
+import logging
+
+# Set up a basic logger if you don't have one
+logger = logging.getLogger(__name__)
+
+# Constants
+END_MARKER = "<<END_OF_RESPONSE>>"
+
+def _read_stream(ws) -> tuple[str, bool]:
     """Collect streamed frames. Return (text, saw_bad_request)."""
     chunks = []
     saw_bad = False
+    
+    print("--- START STREAM READING ---") # Debug log
+
     while True:
         try:
             frame = ws.recv()
-        except Exception:
+        except Exception as e:
+            print(f"DEBUG: Socket exception or closed: {e}")
             break
+        
         if not frame:
+            print("DEBUG: Received empty frame. Stopping.")
             break
+        
+        # 1. Log the raw frame exactly as received
+        print(f"DEBUG: Raw Frame Received: {repr(frame)}")
+
         if isinstance(frame, str) and frame.strip().lower().startswith("bad request"):
+            print("DEBUG: Detected 'Bad Request' signal.")
             saw_bad = True
             break
+        
         try:
             obj = json.loads(frame)
+            # 2. Log that we successfully parsed JSON
+            print(f"DEBUG: Parsed JSON: {obj}")
         except Exception:
+            print(f"DEBUG: Frame is not JSON. Appending raw string.")
             chunks.append(str(frame))
             continue
+        
         if isinstance(obj, dict):
-            if obj.get("response") == END_MARKER:
+            # 3. Check specifically for the end marker
+            response_val = obj.get("response")
+            if response_val == END_MARKER:
+                print(f"DEBUG: Found END_MARKER: {END_MARKER}. Breaking loop.")
                 break
+            
+            # 4. Check what keys exist if 'text' is missing
             if "text" in obj:
+                print(f"DEBUG: Found 'text' content: {obj['text']}")
                 chunks.append(str(obj["text"]))
-    return "".join(chunks).strip(), saw_bad
+            else:
+                print(f"DEBUG: JSON object received but missing 'text' key. Keys found: {list(obj.keys())}")
+    
+    full_text = "".join(chunks).strip()
+    print(f"--- END STREAM READING. Total Length: {len(full_text)} ---")
+    return full_text, saw_bad
 
 
 class AvaClient:
@@ -129,7 +165,7 @@ class AvaClient:
             log_msg = f"[AVA API] Requesting NEW session with force_new=True"
             logger.info(log_msg)
             print(log_msg, flush=True)
-        r = requests.get(url, headers={"Authorization": self.token}, timeout=30)
+        r = requests.get(url, headers={"Authorization": self.token}, timeout=30) # THIS WAITS FOR 30 SECONDS FOR THE REPLY GETS A NEW SESSION ID
         r.raise_for_status()
         data = r.json()
         new_session_id = str(data["id"])

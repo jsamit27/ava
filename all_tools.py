@@ -340,6 +340,42 @@ def update_buyer_schedule(
         existing = cur.fetchone()
         
         if not existing:
+            # Check if patch contains a new schedule_time to add instead
+            if "schedule_time" in patch:
+                new_st = _dt_str(patch["schedule_time"])
+                if new_st:
+                    # Close current connection before calling add_buyer_schedule (it opens its own)
+                    try:
+                        conn.close()
+                        conn = None  # Mark as closed so finally block doesn't try again
+                    except Exception:
+                        pass
+                    
+                    # Try to add the new schedule instead
+                    add_patch = {
+                        "description": patch.get("description", "Rescheduled meeting"),
+                        "schedule_time": new_st,
+                        "priority": patch.get("priority", "Medium")
+                    }
+                    # Call add_buyer_schedule (it will open its own connection)
+                    add_result = add_buyer_schedule(buyer_id, sqlite_path, add_patch)
+                    
+                    if add_result["status"] == "success":
+                        return {
+                            "status": "success",
+                            "code": "AUTO_SCHEDULED",
+                            "message": f"Couldn't find schedule at {st} to update, but we scheduled your new meeting at {new_st}.",
+                            "data": {
+                                "original_time": st,
+                                "new_schedule": add_result["data"].get("schedule", {}),
+                                "auto_scheduled": True
+                            }
+                        }
+                    else:
+                        # If add failed (e.g., time already booked), return that error
+                        return add_result
+            
+            # No new schedule_time in patch, return original NOT_FOUND
             return {
                 "status": "error",
                 "code": "NOT_FOUND",
@@ -430,8 +466,11 @@ def update_buyer_schedule(
         return {"status":"error","code":"TXN_FAILED","message":f"Update failed: {e}","data":{}}
 
     finally:
-        try: conn.close()
-        except Exception: pass
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
 
 PRIORITY = ["car_id", "vin", "model", "make", "year"]
 

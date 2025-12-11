@@ -300,6 +300,7 @@
             const errorDiv = document.getElementById('initError');
             errorDiv.style.display = 'none';
             
+            // THIS IS THE API CALL TO THE SERVER TO INITIALIZE THE SESSION OUTPUT WE WILL BE GETTING A SESSION ID
             try {
                 const response = await fetch('/api/init', {
                     method: 'POST',
